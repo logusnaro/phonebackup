@@ -1,0 +1,25 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PhoneBackup.Desktop", "src\Desktop\PhoneBackup.Desktop.csproj", "{A9C8B9F1-0B94-4E08-B08F-7E4A7F8B5B1C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PhoneBackup.Tests", "tests\PhoneBackup.Tests\PhoneBackup.Tests.csproj", "{B0F3D8E2-7D9B-4C5B-9D20-2B603F69A51A}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A9C8B9F1-0B94-4E08-B08F-7E4A7F8B5B1C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A9C8B9F1-0B94-4E08-B08F-7E4A7F8B5B1C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A9C8B9F1-0B94-4E08-B08F-7E4A7F8B5B1C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A9C8B9F1-0B94-4E08-B08F-7E4A7F8B5B1C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B0F3D8E2-7D9B-4C5B-9D20-2B603F69A51A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B0F3D8E2-7D9B-4C5B-9D20-2B603F69A51A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B0F3D8E2-7D9B-4C5B-9D20-2B603F69A51A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B0F3D8E2-7D9B-4C5B-9D20-2B603F69A51A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A9C8B9F1-0B94-4E08-B08F-7E4A7F8B5B1C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

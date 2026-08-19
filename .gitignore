@@ -1,0 +1,17 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+android/.gradle/
+android/**/build/
+*.apk
+*.aab
+*.partial
+.tools/
+.gradle-home/
+.android/
+android/.temp/
+artifacts/
+.android-home/
+android/.kotlin/

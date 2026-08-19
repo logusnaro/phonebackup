@@ -1,0 +1,43 @@
+using System.IO;
+using PhoneBackup.Desktop.Models;
+using PhoneBackup.Desktop.Services;
+
+namespace PhoneBackup.Desktop;
+
+public sealed class AppServices : IDisposable
+{
+    public string DataRoot { get; }
+    public DatabaseService Database { get; }
+    public BackupService Backups { get; }
+    public ContactService Contacts { get; }
+    public ScheduleService Schedules { get; }
+    public PairingService Pairing { get; }
+    public PairingDiscoveryService PairingDiscovery { get; }
+    public LocalServer Server { get; }
+
+    public AppServices(string dataRoot)
+    {
+        DataRoot = dataRoot;
+        Database = new DatabaseService(Path.Combine(dataRoot, "phonebackup.db"));
+        Backups = new BackupService(Database);
+        Contacts = new ContactService(Database);
+        Schedules = new ScheduleService(Database);
+        Pairing = new PairingService(Database);
+        PairingDiscovery = new PairingDiscoveryService(Pairing);
+        Server = new LocalServer(Database, Backups, Contacts, Pairing, dataRoot);
+    }
+
+    public async Task StartAsync()
+    {
+        await Database.InitializeAsync();
+        await Server.StartAsync();
+        PairingDiscovery.Start();
+    }
+
+    public void Dispose()
+    {
+        Server.Dispose();
+        PairingDiscovery.Dispose();
+        Database.Dispose();
+    }
+}
