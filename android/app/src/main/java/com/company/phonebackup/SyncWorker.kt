@@ -26,7 +26,10 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 client.progress(config, runId, seen, files.size, relative, "업로드 중")
                 val temp = repository.copyToTemp(uri)
                 try {
-                    client.upload(config, runId, temp, relative, if (relative.contains("record", true) || relative.contains("call", true) || relative.endsWith(".m4a", true)) "recording" else "file")
+                    val sha = client.sha256ForUpload(temp)
+                    if (!client.isKnown(config, relative, sha)) {
+                        client.upload(config, runId, temp, relative, if (relative.contains("record", true) || relative.contains("call", true) || relative.endsWith(".m4a", true)) "recording" else "file", sha)
+                    }
                     stored++
                 } finally { temp.delete() }
                 seen++

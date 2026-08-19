@@ -96,6 +96,14 @@ public sealed class LocalServer : IDisposable
             }
             finally { if (File.Exists(temp)) File.Delete(temp); }
         });
+        _app.MapGet("/api/v1/sync/known", async (HttpContext context) =>
+        {
+            var deviceId = await AuthenticateAsync(context); if (deviceId is null) return Results.Unauthorized();
+            var relative = DecodeUtf8Header(context, "X-Relative-Path-B64", "X-Relative-Path");
+            var sha = context.Request.Query["sha256"].ToString();
+            if (string.IsNullOrWhiteSpace(relative) || string.IsNullOrWhiteSpace(sha)) return Results.BadRequest();
+            return Results.Ok(new { known = await _backups.IsKnownAsync(deviceId.Value, relative, sha) });
+        });
         _app.MapPost("/api/v1/sync/finish", async (HttpContext context) =>
         {
             if (await AuthenticateAsync(context) is null) return Results.Unauthorized();

@@ -93,10 +93,18 @@ class NetworkClient(private val context: Context, private val store: PairingStor
             if (!it.isSuccessful) error("진행상황 전송 실패: ${it.code}")
         }
     }
-    fun upload(config: PairingConfig, runId: String, file: File, relativePath: String, category: String) {
+    fun isKnown(config: PairingConfig, relativePath: String, sha256: String): Boolean {
+        val encoded = Base64.encodeToString(relativePath.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        val request = Request.Builder().url("${config.serverUrl}/api/v1/sync/known?sha256=$sha256").headers(headers(config).newBuilder().add("X-Relative-Path-B64", encoded).build()).get().build()
+        authenticated(config).newCall(request).execute().use { response ->
+            if (!response.isSuccessful) error("기존 백업 확인 실패: HTTP ${response.code}")
+            return json.decodeFromString<Map<String, Boolean>>(response.body!!.string())["known"] == true
+        }
+    }
+    fun upload(config: PairingConfig, runId: String, file: File, relativePath: String, category: String, sha256: String) {
         val relativeB64 = Base64.encodeToString(relativePath.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
         val nameB64 = Base64.encodeToString(relativePath.substringAfterLast('/').toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-        val requestHeaders = headers(config).newBuilder().add("X-Relative-Path-B64", relativeB64).add("X-SHA256", sha256(file)).add("X-Original-File-Name-B64", nameB64).add("X-Category", category).build()
+        val requestHeaders = headers(config).newBuilder().add("X-Relative-Path-B64", relativeB64).add("X-SHA256", sha256).add("X-Original-File-Name-B64", nameB64).add("X-Category", category).build()
         val request = Request.Builder().url("${config.serverUrl}/api/v1/sync/file?syncRunId=$runId").headers(requestHeaders).put(file.asRequestBody("application/octet-stream".toMediaType())).build()
         authenticated(config).newCall(request).execute().use { if (!it.isSuccessful) error("파일 업로드 실패 $relativePath: HTTP ${it.code}") }
     }
@@ -116,6 +124,7 @@ class NetworkClient(private val context: Context, private val store: PairingStor
     private fun authenticated(config: PairingConfig) = client(config)
     private fun headers(config: PairingConfig) = Headers.headersOf("X-Device-Id", config.deviceId, "X-Device-Token", config.token)
     private fun sha256(file: File): String { val digest = MessageDigest.getInstance("SHA-256"); file.inputStream().use { input -> val buf = ByteArray(1024 * 1024); var n: Int; while (input.read(buf).also { n = it } > 0) digest.update(buf, 0, n) }; return digest.digest().joinToString("") { "%02X".format(it) } }
+    fun sha256ForUpload(file: File): String = sha256(file)
 }
 
 @Serializable data class PairingTicketInput(val ticketId: String, val serverUrl: String, val certificateSha256: String)

@@ -36,6 +36,13 @@ public sealed class BackupService
                 p.AddWithValue("$processed", processed); p.AddWithValue("$file", (object?)currentFile ?? DBNull.Value);
                 p.AddWithValue("$stage", stage); p.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O")); });
 
+    public async Task<bool> IsKnownAsync(Guid deviceId, string relativePath, string sha256)
+    {
+        var rows = await _database.QueryAsync("SELECT 1 FROM backup_items WHERE device_id=$device AND relative_path=$path AND sha256=$sha AND verified_at IS NOT NULL LIMIT 1",
+            _ => true, p => { p.AddWithValue("$device", deviceId.ToString()); p.AddWithValue("$path", relativePath); p.AddWithValue("$sha", sha256); });
+        return rows.Count > 0;
+    }
+
     public async Task<StoredFileResult> StoreAsync(Guid deviceId, Guid syncRunId, BackupManifestItem item, Stream content)
     {
         Directory.CreateDirectory(_root);

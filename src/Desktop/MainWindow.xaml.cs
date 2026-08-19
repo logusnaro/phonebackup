@@ -25,6 +25,7 @@ public partial class MainWindow : Window
             ServerText.Text = $"수신 대기: {App.Services.Server.ServerUrl}";
             await RefreshMembersAsync();
             await RefreshContactsAsync();
+            await RefreshFilesAsync();
             var schedules = await App.Services.Schedules.ListAsync();
             var schedule = schedules.FirstOrDefault();
             ScheduleTimesTextBox.Text = schedule?.Times.Length > 0 ? string.Join(", ", schedule.Times) : "19:00";
@@ -116,6 +117,7 @@ public partial class MainWindow : Window
                 _ => $"{run.Device} · 백업 실패 · {run.Error ?? "알 수 없는 오류"}"
             };
             if (run.Finished is not null) LastBackupText.Text = run.Finished.Value.ToLocalTime().ToString("MM-dd HH:mm");
+            if (string.IsNullOrWhiteSpace(SearchBox.Text)) await RefreshFilesAsync();
         }
         catch (Exception ex) { BackupProgressText.Text = $"상태 확인 실패: {ex.Message}"; }
     }
@@ -207,7 +209,12 @@ public partial class MainWindow : Window
     }
     private async void SearchFiles_Click(object sender, RoutedEventArgs e)
     {
-        var term = SearchBox.Text.Trim(); var rows = await App.Services.Database.QueryAsync("SELECT recorded_at,parsed_contact_name,original_file_name,verified_at FROM backup_items WHERE $term='' OR original_file_name LIKE '%'||$term||'%' OR parsed_contact_name LIKE '%'||$term||'%' OR parsed_phone_number LIKE '%'||$term||'%' ORDER BY recorded_at DESC", r => new { RecordedAt = r.IsDBNull(0) ? "미확인" : r.GetString(0), ParsedContactName = r.IsDBNull(1) ? "미확인" : r.GetString(1), OriginalFileName = r.GetString(2), Status = r.IsDBNull(3) ? "대기" : "검증 완료" }, p => p.AddWithValue("$term", term)); FilesGrid.ItemsSource = rows;
+        await RefreshFilesAsync(SearchBox.Text.Trim());
+    }
+    private async Task RefreshFilesAsync(string term = "")
+    {
+        var rows = await App.Services.Database.QueryAsync("SELECT recorded_at,parsed_contact_name,original_file_name,verified_at FROM backup_items WHERE $term='' OR original_file_name LIKE '%'||$term||'%' OR parsed_contact_name LIKE '%'||$term||'%' OR parsed_phone_number LIKE '%'||$term||'%' ORDER BY COALESCE(recorded_at,last_seen_at) DESC LIMIT 300", r => new { RecordedAt = r.IsDBNull(0) ? "미확인" : r.GetString(0), ParsedContactName = r.IsDBNull(1) ? "미확인" : r.GetString(1), OriginalFileName = r.GetString(2), Status = r.IsDBNull(3) ? "대기" : "검증 완료" }, p => p.AddWithValue("$term", term));
+        FilesGrid.ItemsSource = rows;
     }
     private void ChooseRoot_Click(object sender, RoutedEventArgs e)
     {
