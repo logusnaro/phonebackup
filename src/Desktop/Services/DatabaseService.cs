@@ -93,6 +93,14 @@ public sealed class DatabaseService : IDisposable
                   subject_id TEXT, details_json TEXT, created_at TEXT NOT NULL);
                 """;
             await command.ExecuteNonQueryAsync();
+            await using var categoryFix = connection.CreateCommand();
+            categoryFix.CommandText = """
+                UPDATE backup_items SET category='recording' WHERE lower(relative_path) LIKE '%tphonecallrecords%' OR lower(relative_path) LIKE '%/recording%' OR lower(relative_path) LIKE 'recording/%' OR lower(relative_path) LIKE '%/call/%' OR lower(relative_path) LIKE 'call/%';
+                UPDATE backup_items SET category='image' WHERE category IN ('file','other') AND lower(relative_path) LIKE '%.jpg' OR category IN ('file','other') AND lower(relative_path) LIKE '%.jpeg' OR category IN ('file','other') AND lower(relative_path) LIKE '%.png' OR category IN ('file','other') AND lower(relative_path) LIKE '%.heic';
+                UPDATE backup_items SET category='video' WHERE category IN ('file','other') AND (lower(relative_path) LIKE '%.mp4' OR lower(relative_path) LIKE '%.mov' OR lower(relative_path) LIKE '%.avi' OR lower(relative_path) LIKE '%.mkv');
+                UPDATE backup_items SET category='document' WHERE category IN ('file','other') AND (lower(relative_path) LIKE '%.pdf' OR lower(relative_path) LIKE '%.doc' OR lower(relative_path) LIKE '%.docx' OR lower(relative_path) LIKE '%.xls' OR lower(relative_path) LIKE '%.xlsx' OR lower(relative_path) LIKE '%.hwp' OR lower(relative_path) LIKE '%.txt');
+                """;
+            await categoryFix.ExecuteNonQueryAsync();
         }
         finally { _gate.Release(); }
     }

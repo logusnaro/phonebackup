@@ -7,6 +7,16 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    private fun categoryFor(path: String): String {
+        val lower = path.lowercase()
+        val ext = lower.substringAfterLast('.', "")
+        if (lower.contains("tphonecallrecords") || lower.contains("recording") || lower.contains("/call/") || lower.startsWith("call/")) return "recording"
+        if (ext in setOf("jpg", "jpeg", "png", "heic", "gif", "webp", "bmp")) return "image"
+        if (ext in setOf("mp4", "mov", "avi", "mkv", "wmv")) return "video"
+        if (ext in setOf("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "hwp", "hwpx", "cell", "show", "txt", "csv", "rtf")) return "document"
+        if (ext in setOf("m4a", "amr", "3gp", "wav", "mp3", "aac", "ogg", "flac")) return "audio"
+        return "other"
+    }
     override suspend fun doWork(): Result {
         val store = PairingStore(applicationContext); val config = store.load() ?: return Result.failure(workDataOf("error" to "PC에 먼저 연결해 주세요."))
         val tree = applicationContext.getSharedPreferences("sync", Context.MODE_PRIVATE).getString("treeUri", null)
@@ -28,7 +38,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 try {
                     val sha = client.sha256ForUpload(temp)
                     if (!client.isKnown(config, relative, sha)) {
-                        client.upload(config, runId, temp, relative, if (relative.contains("record", true) || relative.contains("call", true) || relative.endsWith(".m4a", true)) "recording" else "file", sha)
+                        client.upload(config, runId, temp, relative, categoryFor(relative), sha)
                     }
                     stored++
                 } finally { temp.delete() }

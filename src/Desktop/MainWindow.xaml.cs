@@ -211,11 +211,17 @@ public partial class MainWindow : Window
     {
         await RefreshFilesAsync(SearchBox.Text.Trim());
     }
+    private async void FileCategoryFilter_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (IsLoaded) await RefreshFilesAsync(SearchBox.Text.Trim());
+    }
     private async Task RefreshFilesAsync(string term = "")
     {
-        var rows = await App.Services.Database.QueryAsync("SELECT recorded_at,parsed_contact_name,original_file_name,verified_at FROM backup_items WHERE $term='' OR original_file_name LIKE '%'||$term||'%' OR parsed_contact_name LIKE '%'||$term||'%' OR parsed_phone_number LIKE '%'||$term||'%' ORDER BY COALESCE(recorded_at,last_seen_at) DESC LIMIT 300", r => new { RecordedAt = r.IsDBNull(0) ? "미확인" : r.GetString(0), ParsedContactName = r.IsDBNull(1) ? "미확인" : r.GetString(1), OriginalFileName = r.GetString(2), Status = r.IsDBNull(3) ? "대기" : "검증 완료" }, p => p.AddWithValue("$term", term));
+        var category = (FileCategoryFilter?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString() ?? "";
+        var rows = await App.Services.Database.QueryAsync("SELECT category,recorded_at,parsed_contact_name,original_file_name,verified_at FROM backup_items WHERE ($term='' OR original_file_name LIKE '%'||$term||'%' OR parsed_contact_name LIKE '%'||$term||'%' OR parsed_phone_number LIKE '%'||$term||'%') AND ($category='' OR category=$category) ORDER BY COALESCE(recorded_at,last_seen_at) DESC LIMIT 300", r => new { Category = CategoryLabel(r.GetString(0)), RecordedAt = r.IsDBNull(1) ? "미확인" : r.GetString(1), ParsedContactName = r.IsDBNull(2) ? "미확인" : r.GetString(2), OriginalFileName = r.GetString(3), Status = r.IsDBNull(4) ? "대기" : "검증 완료" }, p => { p.AddWithValue("$term", term); p.AddWithValue("$category", category); });
         FilesGrid.ItemsSource = rows;
     }
+    private static string CategoryLabel(string category) => category switch { "recording" => "통화녹음", "image" => "사진", "video" => "영상", "document" => "문서", "audio" => "음성", _ => "기타" };
     private void ChooseRoot_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFolderDialog { Title = "백업 저장 폴더 선택" };
