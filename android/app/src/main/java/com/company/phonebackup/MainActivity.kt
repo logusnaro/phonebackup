@@ -123,6 +123,7 @@ class MainActivity : ComponentActivity() {
     }
     @Composable private fun PhoneBackupScreen() {
         var pairingCode by remember { mutableStateOf("") }
+        var showDeletionConfirm by remember { mutableStateOf(false) }
         LaunchedEffect(Unit) {
             while (true) {
                 val config = store.load()
@@ -161,7 +162,7 @@ class MainActivity : ComponentActivity() {
             OutlinedButton(onClick = { usbPairingFile.launch(arrayOf("application/json", "text/plain", "*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("USB 등록하기") }
             OutlinedButton(onClick = { useDefaultFolders() }, modifier = Modifier.fillMaxWidth()) { Text("표준 폴더 자동 검색") }
             TextButton(onClick = { folderPicker.launch(null) }, modifier = Modifier.fillMaxWidth()) { Text("직접 폴더 선택(필요한 경우)") }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { permissions.launch(arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS)) }) { Text("주소록 권한") }; Button(onClick = { startBackup() }, enabled = !backupRunning.value && !deletionRunning.value) { Text(if (backupRunning.value) "백업 중…" else "지금 백업") }; OutlinedButton(onClick = { startDeletion() }, enabled = !deletionRunning.value && !backupRunning.value) { Text(if (deletionRunning.value) "삭제 확인 중…" else "90일 이전 삭제") } }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { permissions.launch(arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS)) }) { Text("주소록 권한") }; Button(onClick = { startBackup() }, enabled = !backupRunning.value && !deletionRunning.value) { Text(if (backupRunning.value) "백업 중…" else "지금 백업") }; OutlinedButton(onClick = { showDeletionConfirm = true }, enabled = !deletionRunning.value && !backupRunning.value) { Text(if (deletionRunning.value) "삭제 확인 중…" else "90일 이전 삭제") } }
             if (backupRunning.value || backupStage.value.isNotBlank()) {
                 val total = backupTotal.intValue
                 if (total > 0) LinearProgressIndicator(progress = { backupProcessed.intValue.toFloat() / total }, modifier = Modifier.fillMaxWidth())
@@ -171,6 +172,13 @@ class MainActivity : ComponentActivity() {
             }
             if (deletionStatus.value.isNotBlank()) Text(deletionStatus.value, style = MaterialTheme.typography.bodySmall)
             Text(status.value, color = MaterialTheme.colorScheme.primary); Text("예약은 PC 앱에서 활성화한 뒤 Android가 Wi‑Fi에서 실행합니다.", style = MaterialTheme.typography.bodySmall)
+            if (showDeletionConfirm) AlertDialog(
+                onDismissRequest = { showDeletionConfirm = false },
+                title = { Text("90일 이전 파일 삭제") },
+                text = { Text("PC에 해시 검증이 완료된 90일 이전 파일을 휴대폰에서 삭제합니다. 원본 경로와 해시가 다르면 자동으로 건너뜁니다. 계속할까요?") },
+                confirmButton = { TextButton(onClick = { showDeletionConfirm = false; startDeletion() }) { Text("삭제 실행") } },
+                dismissButton = { TextButton(onClick = { showDeletionConfirm = false }) { Text("취소") } }
+            )
         }
     }
 
