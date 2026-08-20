@@ -25,6 +25,8 @@ public partial class MainWindow : Window
             ServerText.Text = $"수신 대기: {App.Services.Server.ServerUrl}";
             await RefreshMembersAsync();
             await RefreshContactsAsync();
+            var backfilled = await App.Services.Backups.BackfillRecordingMetadataAsync();
+            if (backfilled > 0) StatusText.Text = $"기존 통화 녹음 {backfilled}개 파일명을 색인했습니다.";
             await RefreshFilesAsync();
             await RefreshGeneralFilesAsync();
             var schedules = await App.Services.Schedules.ListAsync();

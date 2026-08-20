@@ -43,6 +43,37 @@ public sealed class BackupService
         return rows.Count > 0;
     }
 
+    public async Task<int> BackfillRecordingMetadataAsync()
+    {
+        var rows = await _database.QueryAsync("""
+            SELECT id,relative_path,size_bytes,last_modified_at,sha256
+            FROM backup_items WHERE category='recording'
+            """, r => new
+        {
+            Id = r.GetString(0),
+            RelativePath = r.GetString(1),
+            Size = r.GetInt64(2),
+            Modified = DateTimeOffset.Parse(r.GetString(3)),
+            Sha = r.GetString(4)
+        });
+        foreach (var row in rows)
+        {
+            var parsed = ParseRecording(row.RelativePath, row.Size, row.Modified, row.Sha);
+            await _database.ExecuteAsync("""
+                UPDATE backup_items SET recorded_at=$recorded,parsed_phone_number=$phone,
+                    parsed_contact_name=COALESCE($contact,parsed_contact_name)
+                WHERE id=$id
+                """, p =>
+            {
+                p.AddWithValue("$recorded", (object?)parsed.RecordedAt?.ToString("O") ?? DBNull.Value);
+                p.AddWithValue("$phone", (object?)parsed.ParsedPhoneNumber ?? DBNull.Value);
+                p.AddWithValue("$contact", (object?)parsed.ParsedContactName ?? DBNull.Value);
+                p.AddWithValue("$id", row.Id);
+            });
+        }
+        return rows.Count;
+    }
+
     public async Task<StoredFileResult> StoreAsync(Guid deviceId, Guid syncRunId, BackupManifestItem item, Stream content)
     {
         Directory.CreateDirectory(_root);
@@ -136,8 +167,13 @@ public sealed class BackupService
         else
         {
             phone = Regex.Match(name, @"(?<!\d)(?:\+?82|0)\d{8,10}(?!\d)").Value;
-            var date = Regex.Match(name, @"(?<y>20\d{2})[\-_\.]?(?<m>\d{2})[\-_\.]?(?<d>\d{2})");
-            if (date.Success && DateTimeOffset.TryParse($"{date.Groups["y"].Value}-{date.Groups["m"].Value}-{date.Groups["d"].Value}", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsed)) recorded = parsed;
+            var timestamp = Regex.Match(stem, @"(?<!\d)(?<stamp>20\d{12})(?!\d)");
+            if (timestamp.Success && DateTimeOffset.TryParseExact(timestamp.Groups["stamp"].Value, "yyyyMMddHHmmss", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsedTimestamp)) recorded = parsedTimestamp;
+            else
+            {
+                var date = Regex.Match(name, @"(?<y>20\d{2})[\-_\.]?(?<m>\d{2})[\-_\.]?(?<d>\d{2})");
+                if (date.Success && DateTimeOffset.TryParse($"{date.Groups["y"].Value}-{date.Groups["m"].Value}-{date.Groups["d"].Value}", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsed)) recorded = parsed;
+            }
         }
         return new BackupManifestItem(relativePath, name, size, modified, sha256, "recording", null, recorded,
             string.IsNullOrEmpty(phone) ? null : PhoneNumberNormalizer.Normalize(phone), contactName);

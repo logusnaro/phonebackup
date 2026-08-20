@@ -40,5 +40,7 @@ public sealed class DomainTests
         Assert.Null(result.ParsedContactName);
         Assert.Equal("+821027315428", result.ParsedPhoneNumber);
         Assert.Equal(new DateTime(2024, 1, 25), result.RecordedAt!.Value.Date);
+        Assert.Equal(18, result.RecordedAt.Value.Hour);
+        Assert.Equal(7, result.RecordedAt.Value.Minute);
     }
 }
