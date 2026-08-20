@@ -1,9 +1,11 @@
 using System.IO;
+using System.Diagnostics;
 using System.Collections.ObjectModel;
 using System.Windows;
 using Microsoft.Win32;
 using System.Windows.Threading;
 using PhoneBackup.Desktop.Models;
+using PhoneBackup.Desktop.Services;
 
 namespace PhoneBackup.Desktop;
 
@@ -230,7 +232,7 @@ public partial class MainWindow : Window
     private async Task RefreshFilesAsync(string term = "")
     {
         var rows = await App.Services.Database.QueryAsync("""
-            SELECT COALESCE(m.name,'미등록') AS member_name, b.category, b.recorded_at,
+            SELECT b.device_id,d.member_id, b.relative_path, COALESCE(m.name,'미등록') AS member_name, b.category, b.recorded_at,
                    COALESCE(b.parsed_contact_name, (SELECT c.display_name FROM contacts c
                      JOIN contact_phones cp ON cp.contact_id=c.id
                      WHERE c.deleted_at IS NULL AND cp.normalized=b.parsed_phone_number LIMIT 1)),
@@ -243,14 +245,14 @@ public partial class MainWindow : Window
                    OR b.parsed_contact_name LIKE '%'||$term||'%'
                    OR b.parsed_phone_number LIKE '%'||$term||'%')
             ORDER BY COALESCE(b.recorded_at,b.last_seen_at) DESC LIMIT 300
-            """, r => new { MemberName = r.GetString(0), Category = CategoryLabel(r.GetString(1)), RecordedAt = r.IsDBNull(2) ? "미확인" : r.GetString(2), ParsedContactName = r.IsDBNull(3) ? "미확인" : r.GetString(3), OriginalFileName = r.GetString(4), Status = r.IsDBNull(5) ? "대기" : "검증 완료" }, p => p.AddWithValue("$term", term));
+            """, r => new FileRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), CategoryLabel(r.GetString(4)), r.IsDBNull(5) ? "미확인" : r.GetString(5), null, r.IsDBNull(6) ? "미확인" : r.GetString(6), r.GetString(7), r.IsDBNull(8) ? "대기" : "검증 완료"), p => p.AddWithValue("$term", term));
         RecordingGrid.ItemsSource = rows;
     }
 
     private async Task RefreshGeneralFilesAsync(string term = "")
     {
         var rows = await App.Services.Database.QueryAsync("""
-            SELECT COALESCE(m.name,'미등록') AS member_name, b.category, b.last_modified_at,
+            SELECT b.device_id,d.member_id, b.relative_path, COALESCE(m.name,'미등록') AS member_name, b.category, b.last_modified_at,
                    b.original_file_name, b.verified_at
             FROM backup_items b
             JOIN devices d ON d.id=b.device_id
@@ -258,10 +260,41 @@ public partial class MainWindow : Window
             WHERE b.category<>'recording'
               AND ($term='' OR b.original_file_name LIKE '%'||$term||'%' OR b.relative_path LIKE '%'||$term||'%')
             ORDER BY b.last_modified_at DESC LIMIT 300
-            """, r => new { MemberName = r.GetString(0), Category = CategoryLabel(r.GetString(1)), LastModifiedAt = r.IsDBNull(2) ? "미확인" : r.GetString(2), OriginalFileName = r.GetString(3), Status = r.IsDBNull(4) ? "대기" : "검증 완료" }, p => p.AddWithValue("$term", term));
+            """, r => new FileRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), CategoryLabel(r.GetString(4)), null, r.IsDBNull(5) ? "미확인" : r.GetString(5), "미확인", r.GetString(6), r.IsDBNull(7) ? "대기" : "검증 완료"), p => p.AddWithValue("$term", term));
         FilesGrid.ItemsSource = rows;
     }
     private static string CategoryLabel(string category) => category switch { "recording" => "통화녹음", "image" => "사진", "video" => "영상", "document" => "문서", "audio" => "음성", _ => "기타" };
+
+    private void FileGrid_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if ((sender as System.Windows.Controls.DataGrid)?.SelectedItem is FileRow row) OpenFileOrFolder(row);
+    }
+
+    private void OpenFileOrFolder(FileRow row)
+    {
+        string path;
+        try { path = Path.Combine(App.Services.Backups.Root, "members", row.MemberId, "devices", row.DeviceId, BackupService.NormalizeRelativePath(row.RelativePath)); }
+        catch (Exception ex) { StatusText.Text = $"파일 경로를 열 수 없습니다: {ex.Message}"; return; }
+        try
+        {
+            if (File.Exists(path))
+            {
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                StatusText.Text = $"파일을 실행했습니다: {row.OriginalFileName}";
+            }
+            else
+            {
+                var folder = Directory.Exists(Path.GetDirectoryName(path)) ? Path.GetDirectoryName(path)! : App.Services.Backups.Root;
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+                StatusText.Text = $"백업 파일을 찾지 못해 폴더를 열었습니다: {folder}";
+            }
+        }
+        catch (Exception ex) { StatusText.Text = $"파일을 열지 못했습니다: {ex.Message}"; }
+    }
+
+    private sealed record FileRow(string DeviceId, string MemberId, string RelativePath, string MemberName,
+        string Category, string? RecordedAt, string? LastModifiedAt, string ParsedContactName,
+        string OriginalFileName, string Status);
     private async Task RefreshDeletionCountAsync()
     {
         var count = await App.Services.Database.QueryAsync("SELECT COUNT(*) FROM deletion_candidates WHERE approved_at IS NULL AND eligible_at <= $now", r => r.GetInt32(0), p => p.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O")));
