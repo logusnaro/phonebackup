@@ -1,7 +1,7 @@
 <Window x:Class="PhoneBackup.Desktop.PairingWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Android 기기 연결" Width="520" Height="330" WindowStartupLocation="CenterOwner">
+        Title="Android 기기 연결" Icon="pack://application:,,,/Assets/phonebackup.ico" Width="520" Height="330" WindowStartupLocation="CenterOwner">
     <StackPanel Margin="24">
         <TextBlock Text="Android 기기 연결" FontSize="24" FontWeight="SemiBold"/>
         <TextBlock x:Name="MemberText" Text="연결 대상 멤버" FontSize="16" FontWeight="SemiBold" Margin="0,10,0,0"/>
