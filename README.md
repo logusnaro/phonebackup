@@ -29,6 +29,8 @@ dotnet publish src/Desktop/PhoneBackup.Desktop.csproj -c Release
 
 현재 환경에서 Windows Release 폴더형 배포본과 Android debug APK 빌드를 검증했습니다. Windows는 `artifacts/PhoneBackup-windows-x64-portable.zip` 압축을 풀어 `PhoneBackup.exe`를 실행합니다. Android APK는 `artifacts/PhoneBackupAndroid-debug.apk`이며 Android 6.0(API 23) 이상을 지원합니다. 첫 현장 연결 전에 실제 삼성 모델/Android 버전과 통화녹음 파일명 샘플을 받아 파일명 파서를 보강해야 합니다.
 
+Android Studio는 필수가 아닙니다. 저장소의 `scripts/build-android.ps1` 또는 설치된 JDK 17·Gradle·Android SDK로 `:app:assembleDebug`를 실행할 수 있습니다. Windows와 Android 앱 아이콘은 초록색 바탕의 흰색 `PB`로 통일되어 있습니다.
+
 ## 운영 주의
 
 자세한 설치·시험 절차는 [한국어 설치 가이드](docs/INSTALL_GUIDE_KO.md)를 먼저 읽으세요.
