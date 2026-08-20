@@ -34,6 +34,31 @@ public sealed class DomainTests
     }
 
     [Fact]
+    public void RecordingParser_ExtractsHospitalTargetAndAffiliationInEitherOrder()
+    {
+        var requestedOrder = BackupService.ParseRecording("최정은.인사팀장.강서우리들병원_01087669640_20240604173959.m4a", 20, DateTimeOffset.Now, "AABB");
+        var deviceOrder = BackupService.ParseRecording("창원파티마병원.주정숙.인사과장_01062545790_20240524110848.m4a", 20, DateTimeOffset.Now, "AABB");
+
+        Assert.Equal("병원", requestedOrder.ParsedTarget);
+        Assert.Equal("강서우리들병원", requestedOrder.ParsedAffiliation);
+        Assert.Equal("병원", deviceOrder.ParsedTarget);
+        Assert.Equal("주정숙", deviceOrder.ParsedContactName);
+        Assert.Equal("창원파티마병원", deviceOrder.ParsedAffiliation);
+    }
+
+    [Fact]
+    public void RecordingParser_ExtractsDoctorTargetAndNormalizesGeneralDoctorAffiliation()
+    {
+        var doctor = BackupService.ParseRecording("장재민.58.정형외과_01052733793_20240409173940.m4a", 20, DateTimeOffset.Now, "AABB");
+        var generalDoctor = BackupService.ParseRecording("김동욱.96년생.일반의(응급의학과)_01093739190_20240909172119.m4a", 20, DateTimeOffset.Now, "AABB");
+
+        Assert.Equal("의사", doctor.ParsedTarget);
+        Assert.Equal("정형외과", doctor.ParsedAffiliation);
+        Assert.Equal("의사", generalDoctor.ParsedTarget);
+        Assert.Equal("일반의", generalDoctor.ParsedAffiliation);
+    }
+
+    [Fact]
     public void RecordingParser_ExtractsPhoneAndTimestampWithoutContactName()
     {
         var result = BackupService.ParseRecording("01027315428_20240125180703.m4a", 20, DateTimeOffset.Now, "AABB");
@@ -42,5 +67,7 @@ public sealed class DomainTests
         Assert.Equal(new DateTime(2024, 1, 25), result.RecordedAt!.Value.Date);
         Assert.Equal(18, result.RecordedAt.Value.Hour);
         Assert.Equal(7, result.RecordedAt.Value.Minute);
+        Assert.Null(result.ParsedTarget);
+        Assert.Null(result.ParsedAffiliation);
     }
 }

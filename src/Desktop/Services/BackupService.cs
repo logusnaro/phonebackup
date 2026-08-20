@@ -61,13 +61,16 @@ public sealed class BackupService
             var parsed = ParseRecording(row.RelativePath, row.Size, row.Modified, row.Sha);
             await _database.ExecuteAsync("""
                 UPDATE backup_items SET recorded_at=$recorded,parsed_phone_number=$phone,
-                    parsed_contact_name=COALESCE($contact,parsed_contact_name)
+                    parsed_contact_name=COALESCE($contact,parsed_contact_name),
+                    parsed_target=$target,parsed_affiliation=$affiliation
                 WHERE id=$id
                 """, p =>
             {
                 p.AddWithValue("$recorded", (object?)parsed.RecordedAt?.ToString("O") ?? DBNull.Value);
                 p.AddWithValue("$phone", (object?)parsed.ParsedPhoneNumber ?? DBNull.Value);
                 p.AddWithValue("$contact", (object?)parsed.ParsedContactName ?? DBNull.Value);
+                p.AddWithValue("$target", (object?)parsed.ParsedTarget ?? DBNull.Value);
+                p.AddWithValue("$affiliation", (object?)parsed.ParsedAffiliation ?? DBNull.Value);
                 p.AddWithValue("$id", row.Id);
             });
         }
@@ -100,8 +103,8 @@ public sealed class BackupService
             INSERT INTO stored_objects(id,sha256,storage_path,size_bytes,created_at) VALUES($id,$sha,$path,$size,$at)
             ON CONFLICT(sha256) DO NOTHING;
             INSERT INTO backup_items(id,stored_object_id,device_id,relative_path,original_file_name,category,size_bytes,
-              last_modified_at,recorded_at,duration_seconds,parsed_phone_number,parsed_contact_name,sha256,verified_at,first_seen_at,last_seen_at)
-            VALUES($item,(SELECT id FROM stored_objects WHERE sha256=$sha),$device,$relative,$name,$category,$size,$modified,$recorded,$duration,$phone,$contact,$sha,$verified,$at,$at)
+              last_modified_at,recorded_at,duration_seconds,parsed_phone_number,parsed_contact_name,parsed_target,parsed_affiliation,sha256,verified_at,first_seen_at,last_seen_at)
+            VALUES($item,(SELECT id FROM stored_objects WHERE sha256=$sha),$device,$relative,$name,$category,$size,$modified,$recorded,$duration,$phone,$contact,$target,$affiliation,$sha,$verified,$at,$at)
             ON CONFLICT(device_id,relative_path,sha256) DO UPDATE SET last_seen_at=excluded.last_seen_at,verified_at=excluded.verified_at;
             """, p => { p.AddWithValue("$id", objectId.ToString()); p.AddWithValue("$sha", item.Sha256); p.AddWithValue("$path", objectPath);
                 p.AddWithValue("$size", item.SizeBytes); p.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O"));
@@ -109,6 +112,7 @@ public sealed class BackupService
                 p.AddWithValue("$name", item.OriginalFileName); p.AddWithValue("$category", item.Category); p.AddWithValue("$modified", item.LastModifiedAt.ToString("O"));
                 p.AddWithValue("$recorded", (object?)item.RecordedAt?.ToString("O") ?? DBNull.Value); p.AddWithValue("$duration", (object?)item.DurationSeconds ?? DBNull.Value);
                 p.AddWithValue("$phone", (object?)item.ParsedPhoneNumber ?? DBNull.Value); p.AddWithValue("$contact", (object?)item.ParsedContactName ?? DBNull.Value);
+                p.AddWithValue("$target", (object?)item.ParsedTarget ?? DBNull.Value); p.AddWithValue("$affiliation", (object?)item.ParsedAffiliation ?? DBNull.Value);
                 p.AddWithValue("$verified", DateTimeOffset.UtcNow.ToString("O")); });
         return new StoredFileResult(objectPath, presentation, item.Sha256);
     }
@@ -154,13 +158,39 @@ public sealed class BackupService
         var structured = Regex.Match(stem,
             @"^(?<prefix>.+)_(?<phone>(?:\+?82|0)[0-9\- ]{8,16})_(?<stamp>20\d{12})$");
         string? contactName = null;
+        string? target = null;
+        string? affiliation = null;
         string phone;
         DateTimeOffset? recorded = null;
         if (structured.Success)
         {
             phone = structured.Groups["phone"].Value;
             var prefixParts = structured.Groups["prefix"].Value.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (prefixParts.Length >= 3) contactName = prefixParts[0];
+            if (prefixParts.Length >= 3)
+            {
+                var hospitalIndex = Array.FindIndex(prefixParts,
+                    part => Regex.IsMatch(part, @"(?:병원|의원|의료원)(?:\([^)]*\))?$|센터$", RegexOptions.IgnoreCase));
+                var yearIndex = Array.FindIndex(prefixParts,
+                    part => Regex.IsMatch(part, @"^\d{2}(?:년생)?$", RegexOptions.IgnoreCase));
+                if (hospitalIndex >= 0)
+                {
+                    target = "병원";
+                    affiliation = prefixParts[hospitalIndex];
+                    var contactIndex = hospitalIndex == 0 ? 1 : 0;
+                    contactName = prefixParts[contactIndex];
+                }
+                else if (yearIndex >= 0)
+                {
+                    target = "의사";
+                    contactName = prefixParts[0];
+                    affiliation = prefixParts[^1];
+                    if (affiliation.StartsWith("일반의", StringComparison.OrdinalIgnoreCase)) affiliation = "일반의";
+                }
+                else
+                {
+                    contactName = prefixParts[0];
+                }
+            }
             if (DateTimeOffset.TryParseExact(structured.Groups["stamp"].Value, "yyyyMMddHHmmss",
                     CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var timestamp)) recorded = timestamp;
         }
@@ -176,7 +206,7 @@ public sealed class BackupService
             }
         }
         return new BackupManifestItem(relativePath, name, size, modified, sha256, "recording", null, recorded,
-            string.IsNullOrEmpty(phone) ? null : PhoneNumberNormalizer.Normalize(phone), contactName);
+            string.IsNullOrEmpty(phone) ? null : PhoneNumberNormalizer.Normalize(phone), contactName, target, affiliation);
     }
 }
 

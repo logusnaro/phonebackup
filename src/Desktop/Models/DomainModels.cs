@@ -10,7 +10,8 @@ public sealed record Device(Guid Id, Guid MemberId, string DisplayName, string P
     string? AndroidVersion, DeviceStatus Status, DateTimeOffset? LastSeenAt, string TokenHash);
 public sealed record BackupManifestItem(string RelativePath, string OriginalFileName, long SizeBytes,
     DateTimeOffset LastModifiedAt, string Sha256, string Category, int? DurationSeconds,
-    DateTimeOffset? RecordedAt, string? ParsedPhoneNumber, string? ParsedContactName);
+    DateTimeOffset? RecordedAt, string? ParsedPhoneNumber, string? ParsedContactName,
+    string? ParsedTarget = null, string? ParsedAffiliation = null);
 public sealed record SyncRun(Guid Id, Guid DeviceId, SyncRunStatus Status, DateTimeOffset StartedAt,
     DateTimeOffset? FinishedAt, int FilesSeen, int FilesStored, string? Error);
 public sealed record Contact(Guid Id, string DisplayName, IReadOnlyList<string> PhoneNumbers,

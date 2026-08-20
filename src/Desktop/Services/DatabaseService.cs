@@ -60,7 +60,8 @@ public sealed class DatabaseService : IDisposable
                   device_id TEXT NOT NULL REFERENCES devices(id), relative_path TEXT NOT NULL,
                   original_file_name TEXT NOT NULL, category TEXT NOT NULL, size_bytes INTEGER NOT NULL,
                   last_modified_at TEXT NOT NULL, recorded_at TEXT, duration_seconds INTEGER,
-                  parsed_phone_number TEXT, parsed_contact_name TEXT, sha256 TEXT NOT NULL,
+                  parsed_phone_number TEXT, parsed_contact_name TEXT, parsed_target TEXT,
+                  parsed_affiliation TEXT, sha256 TEXT NOT NULL,
                   verified_at TEXT, first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
                   UNIQUE(device_id, relative_path, sha256));
                 CREATE INDEX IF NOT EXISTS ix_backup_items_contact ON backup_items(parsed_contact_name);
@@ -101,6 +102,23 @@ public sealed class DatabaseService : IDisposable
                 UPDATE backup_items SET category='document' WHERE category IN ('file','other') AND (lower(relative_path) LIKE '%.pdf' OR lower(relative_path) LIKE '%.doc' OR lower(relative_path) LIKE '%.docx' OR lower(relative_path) LIKE '%.xls' OR lower(relative_path) LIKE '%.xlsx' OR lower(relative_path) LIKE '%.hwp' OR lower(relative_path) LIKE '%.txt');
                 """;
             await categoryFix.ExecuteNonQueryAsync();
+            foreach (var migration in new[]
+                     {
+                         "ALTER TABLE backup_items ADD COLUMN parsed_target TEXT;",
+                         "ALTER TABLE backup_items ADD COLUMN parsed_affiliation TEXT;"
+                     })
+            {
+                try
+                {
+                    await using var alter = connection.CreateCommand();
+                    alter.CommandText = migration;
+                    await alter.ExecuteNonQueryAsync();
+                }
+                catch (SqliteException)
+                {
+                    // The column is already present on databases created by a newer build.
+                }
+            }
             await using var staleRuns = connection.CreateCommand();
             staleRuns.CommandText = """
                 UPDATE sync_runs SET status=3,finished_at=$at,error='중단된 백업 회차(재시작 필요)'

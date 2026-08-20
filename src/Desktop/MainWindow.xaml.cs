@@ -233,10 +233,11 @@ public partial class MainWindow : Window
     {
         var rows = await App.Services.Database.QueryAsync("""
             SELECT b.device_id,d.member_id, b.relative_path, COALESCE(m.name,'미등록') AS member_name, b.category, b.recorded_at,
+                   b.parsed_target,
                    COALESCE(b.parsed_contact_name, (SELECT c.display_name FROM contacts c
                      JOIN contact_phones cp ON cp.contact_id=c.id
                      WHERE c.deleted_at IS NULL AND cp.normalized=b.parsed_phone_number LIMIT 1)),
-                   b.original_file_name, b.verified_at
+                   b.parsed_affiliation,b.original_file_name, b.verified_at
             FROM backup_items b
             JOIN devices d ON d.id=b.device_id
             LEFT JOIN members m ON m.id=d.member_id
@@ -245,7 +246,7 @@ public partial class MainWindow : Window
                    OR b.parsed_contact_name LIKE '%'||$term||'%'
                    OR b.parsed_phone_number LIKE '%'||$term||'%')
             ORDER BY COALESCE(b.recorded_at,b.last_seen_at) DESC LIMIT 300
-            """, r => new FileRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), CategoryLabel(r.GetString(4)), r.IsDBNull(5) ? "미확인" : r.GetString(5), null, r.IsDBNull(6) ? "미확인" : r.GetString(6), r.GetString(7), r.IsDBNull(8) ? "대기" : "검증 완료"), p => p.AddWithValue("$term", term));
+            """, r => new FileRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), CategoryLabel(r.GetString(4)), r.IsDBNull(5) ? "미확인" : r.GetString(5), r.IsDBNull(6) ? "미확인" : r.GetString(6), r.IsDBNull(7) ? "미확인" : r.GetString(7), r.IsDBNull(8) ? "미확인" : r.GetString(8), r.GetString(9), r.IsDBNull(10) ? "대기" : "검증 완료"), p => p.AddWithValue("$term", term));
         RecordingGrid.ItemsSource = rows;
     }
 
@@ -260,7 +261,7 @@ public partial class MainWindow : Window
             WHERE b.category<>'recording'
               AND ($term='' OR b.original_file_name LIKE '%'||$term||'%' OR b.relative_path LIKE '%'||$term||'%')
             ORDER BY b.last_modified_at DESC LIMIT 300
-            """, r => new FileRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), CategoryLabel(r.GetString(4)), null, r.IsDBNull(5) ? "미확인" : r.GetString(5), "미확인", r.GetString(6), r.IsDBNull(7) ? "대기" : "검증 완료"), p => p.AddWithValue("$term", term));
+            """, r => new FileRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), CategoryLabel(r.GetString(4)), null, r.IsDBNull(5) ? "미확인" : r.GetString(5), "미확인", "미확인", r.GetString(6), r.IsDBNull(7) ? "대기" : "검증 완료"), p => p.AddWithValue("$term", term));
         FilesGrid.ItemsSource = rows;
     }
     private static string CategoryLabel(string category) => category switch { "recording" => "통화녹음", "image" => "사진", "video" => "영상", "document" => "문서", "audio" => "음성", _ => "기타" };
@@ -293,8 +294,8 @@ public partial class MainWindow : Window
     }
 
     private sealed record FileRow(string DeviceId, string MemberId, string RelativePath, string MemberName,
-        string Category, string? RecordedAt, string? LastModifiedAt, string ParsedContactName,
-        string OriginalFileName, string Status);
+        string Category, string? RecordedAt, string? ParsedTarget, string ParsedContactName,
+        string ParsedAffiliation, string OriginalFileName, string Status);
     private async Task RefreshDeletionCountAsync()
     {
         var count = await App.Services.Database.QueryAsync("SELECT COUNT(*) FROM deletion_candidates WHERE approved_at IS NULL AND eligible_at <= $now", r => r.GetInt32(0), p => p.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O")));
