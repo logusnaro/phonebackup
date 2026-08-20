@@ -114,6 +114,44 @@ public sealed class LocalServer : IDisposable
             await _backups.FinishSyncAsync(payload.SyncRunId, payload.Status, payload.FilesSeen, payload.FilesStored, payload.Error);
             return Results.Ok();
         });
+        _app.MapGet("/api/v1/deletions/candidates", async (HttpContext context) =>
+        {
+            var deviceId = await AuthenticateAsync(context); if (deviceId is null) return Results.Unauthorized();
+            var days = int.TryParse(context.Request.Query["olderThanDays"], out var requested) ? Math.Clamp(requested, 1, 3650) : 90;
+            var cutoff = DateTimeOffset.UtcNow.AddDays(-days).ToString("O");
+            var rows = await _database.QueryAsync("""
+                SELECT b.id,b.relative_path,b.sha256,b.verified_at
+                FROM backup_items b
+                WHERE b.device_id=$device AND b.verified_at IS NOT NULL
+                  AND b.last_seen_at <= $cutoff
+                  AND NOT EXISTS (SELECT 1 FROM deletion_candidates c WHERE c.id=b.id AND c.approved_at IS NOT NULL)
+                ORDER BY b.last_seen_at
+                """, r => new { Id = Guid.Parse(r.GetString(0)), RelativePath = r.GetString(1), Sha256 = r.GetString(2), VerifiedAt = r.GetString(3) }, p => { p.AddWithValue("$device", deviceId.Value.ToString()); p.AddWithValue("$cutoff", cutoff); });
+            foreach (var row in rows)
+            {
+                await _database.ExecuteAsync("""
+                    INSERT INTO deletion_candidates(id,device_id,relative_path,sha256,verified_at,eligible_at,approved_at)
+                    VALUES($id,$device,$path,$sha,$verified,$eligible,NULL)
+                    ON CONFLICT(id) DO UPDATE SET sha256=excluded.sha256,verified_at=excluded.verified_at,eligible_at=excluded.eligible_at
+                    """, p => { p.AddWithValue("$id", row.Id.ToString()); p.AddWithValue("$device", deviceId.Value.ToString()); p.AddWithValue("$path", row.RelativePath); p.AddWithValue("$sha", row.Sha256); p.AddWithValue("$verified", row.VerifiedAt); p.AddWithValue("$eligible", cutoff); });
+            }
+            return Results.Ok(rows.Select(x => new { id = x.Id, relativePath = x.RelativePath, sha256 = x.Sha256 }));
+        });
+        _app.MapPost("/api/v1/deletions/results", async (HttpContext context) =>
+        {
+            var deviceId = await AuthenticateAsync(context); if (deviceId is null) return Results.Unauthorized();
+            var results = await context.Request.ReadFromJsonAsync<List<DeletionResultPayload>>();
+            if (results is null) return Results.BadRequest();
+            foreach (var result in results.Where(x => x.Deleted))
+            {
+                await _database.ExecuteAsync("""
+                    UPDATE deletion_candidates SET approved_at=$at
+                    WHERE id=$id AND device_id=$device AND relative_path=$path
+                    """, p => { p.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O")); p.AddWithValue("$id", result.Id.ToString()); p.AddWithValue("$device", deviceId.Value.ToString()); p.AddWithValue("$path", result.RelativePath); });
+                await _database.ExecuteAsync("INSERT INTO audit_log(event_type,subject_id,details_json,created_at) VALUES($event,$subject,$details,$at)", p => { p.AddWithValue("$event", "file_deleted_on_device"); p.AddWithValue("$subject", result.Id.ToString()); p.AddWithValue("$details", System.Text.Json.JsonSerializer.Serialize(new { result.RelativePath, result.Reason })); p.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O")); });
+            }
+            return Results.Ok(new { received = results.Count, deleted = results.Count(x => x.Deleted) });
+        });
         _app.MapPost("/api/v1/sync/progress", async (HttpContext context) =>
         {
             if (await AuthenticateAsync(context) is null) return Results.Unauthorized();

@@ -29,6 +29,7 @@ public partial class MainWindow : Window
             if (backfilled > 0) StatusText.Text = $"기존 통화 녹음 {backfilled}개 파일명을 색인했습니다.";
             await RefreshFilesAsync();
             await RefreshGeneralFilesAsync();
+            await RefreshDeletionCountAsync();
             var schedules = await App.Services.Schedules.ListAsync();
             var schedule = schedules.FirstOrDefault();
             ScheduleTimesTextBox.Text = schedule?.Times.Length > 0 ? string.Join(", ", schedule.Times) : "19:00";
@@ -122,6 +123,7 @@ public partial class MainWindow : Window
             if (run.Finished is not null) LastBackupText.Text = run.Finished.Value.ToLocalTime().ToString("MM-dd HH:mm");
             if (string.IsNullOrWhiteSpace(SearchBox.Text)) await RefreshFilesAsync();
             if (string.IsNullOrWhiteSpace(GeneralSearchBox.Text)) await RefreshGeneralFilesAsync();
+            await RefreshDeletionCountAsync();
         }
         catch (Exception ex) { BackupProgressText.Text = $"상태 확인 실패: {ex.Message}"; }
     }
@@ -142,6 +144,12 @@ public partial class MainWindow : Window
         ScheduleTimesTextBox.Text = string.Join(", ", times);
         await SaveScheduleAsync(ScheduleEnabledCheckBox.IsChecked == true, times);
         StatusText.Text = $"예약 백업 시각을 {string.Join(", ", times)}(으)로 저장했습니다.";
+    }
+
+    private async void RefreshDeletionCandidates_Click(object sender, RoutedEventArgs e)
+    {
+        await RefreshDeletionCountAsync();
+        StatusText.Text = "휴대폰의 ‘90일 이전 삭제’ 버튼을 누르면 해시 검증 가능한 삭제 후보가 표시됩니다.";
     }
 
     private async Task SaveScheduleAsync(bool enabled, string[]? times = null)
@@ -254,6 +262,11 @@ public partial class MainWindow : Window
         FilesGrid.ItemsSource = rows;
     }
     private static string CategoryLabel(string category) => category switch { "recording" => "통화녹음", "image" => "사진", "video" => "영상", "document" => "문서", "audio" => "음성", _ => "기타" };
+    private async Task RefreshDeletionCountAsync()
+    {
+        var count = await App.Services.Database.QueryAsync("SELECT COUNT(*) FROM deletion_candidates WHERE approved_at IS NULL AND eligible_at <= $now", r => r.GetInt32(0), p => p.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O")));
+        DeletionCountText.Text = count.FirstOrDefault().ToString();
+    }
     private void ChooseRoot_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFolderDialog { Title = "백업 저장 폴더 선택" };

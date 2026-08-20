@@ -10,5 +10,6 @@ public sealed record ManifestRequest(Guid SyncRunId, Guid DeviceId, IReadOnlyLis
 public sealed record ChunkRequest(Guid SyncRunId, string RelativePath, string Sha256, long Offset, long TotalBytes);
 public sealed record ContactSnapshot(Guid DeviceId, IReadOnlyList<Contact> Contacts);
 public sealed record DeleteRequest(Guid DeviceId, IReadOnlyList<DeletionCandidate> Items);
+public sealed record DeletionResultPayload(Guid Id, string RelativePath, bool Deleted, string? Reason);
 public sealed record RestoreRequest(Guid DeviceId, Guid StoredObjectId, string DestinationRelativePath,
     string ConflictMode);

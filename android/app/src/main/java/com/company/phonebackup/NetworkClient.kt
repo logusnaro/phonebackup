@@ -3,6 +3,7 @@ package com.company.phonebackup
 import android.content.Context
 import android.os.Build
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -29,6 +30,8 @@ import java.security.cert.CertificateException
 @Serializable data class StartResponse(val syncRunId: String)
 @Serializable data class FinishPayload(val syncRunId: String, val status: String, val filesSeen: Int, val filesStored: Int, val error: String?)
 @Serializable data class ProgressPayload(val syncRunId: String, val filesProcessed: Int, val filesTotal: Int, val currentFile: String?, val stage: String)
+@Serializable data class DeletionItemDto(val id: String, val relativePath: String, val sha256: String)
+@Serializable data class DeletionResultDto(val id: String, val relativePath: String, val deleted: Boolean, val reason: String? = null)
 
 class NetworkClient(private val context: Context, private val store: PairingStore) {
     private val json = Json { ignoreUnknownKeys = true }
@@ -116,6 +119,14 @@ class NetworkClient(private val context: Context, private val store: PairingStor
     fun downloadContacts(config: PairingConfig): List<ContactDto> {
         val response = authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/contacts").headers(headers(config)).get().build()).execute()
         response.use { if (!it.isSuccessful) error("주소록 다운로드 실패: ${it.code}"); return json.decodeFromString(it.body!!.string()) }
+    }
+    fun fetchDeletionCandidates(config: PairingConfig, olderThanDays: Int = 90): List<DeletionItemDto> {
+        val response = authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/deletions/candidates?olderThanDays=$olderThanDays").headers(headers(config)).get().build()).execute()
+        response.use { if (!it.isSuccessful) error("삭제 후보 조회 실패: ${it.code}"); return json.decodeFromString(it.body!!.string()) }
+    }
+    fun reportDeletionResults(config: PairingConfig, results: List<DeletionResultDto>) {
+        val body = json.encodeToString(ListSerializer(DeletionResultDto.serializer()), results).toRequestBody("application/json".toMediaType())
+        authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/deletions/results").headers(headers(config)).post(body).build()).execute().use { if (!it.isSuccessful) error("삭제 결과 저장 실패: ${it.code}") }
     }
     fun finish(config: PairingConfig, runId: String, seen: Int, stored: Int, error: String? = null) {
         val body = json.encodeToString(FinishPayload.serializer(), FinishPayload(runId, if (error == null) "Completed" else "Failed", seen, stored, error)).toRequestBody("application/json".toMediaType())

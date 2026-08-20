@@ -67,6 +67,28 @@ class FileRepository(private val context: Context) {
         context.getSharedPreferences("backup_profiles", Context.MODE_PRIVATE)
             .edit().remove("roots_$deviceId").apply()
     }
+
+    fun sizeOf(uri: Uri): Long {
+        if (uri.scheme == "file") return File(uri.path ?: return 0L).length()
+        return DocumentFile.fromSingleUri(context, uri)?.length() ?: 0L
+    }
+
+    fun deleteIfMatches(uri: Uri, expectedSha256: String): Boolean {
+        val temp = copyToTemp(uri)
+        return try {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            temp.inputStream().use { input ->
+                val buffer = ByteArray(1024 * 1024)
+                var read: Int
+                while (input.read(buffer).also { read = it } > 0) digest.update(buffer, 0, read)
+            }
+            val actual = digest.digest().joinToString("") { "%02X".format(it) }
+            if (!actual.equals(expectedSha256, ignoreCase = true)) return false
+            if (uri.scheme == "file") File(uri.path ?: return false).delete()
+            else DocumentFile.fromSingleUri(context, uri)?.delete() == true
+        } finally { temp.delete() }
+    }
+
     fun copyToTemp(uri: Uri): File {
         val file = File.createTempFile("phonebackup-", ".upload", context.cacheDir)
         val input = if (uri.scheme == "file") FileInputStream(uri.path!!) else context.contentResolver.openInputStream(uri)!!
