@@ -114,12 +114,33 @@ public sealed class BackupService
     public static BackupManifestItem ParseRecording(string relativePath, long size, DateTimeOffset modified, string sha256)
     {
         var name = Path.GetFileName(relativePath);
-        var phone = Regex.Match(name, @"(?<!\d)(?:\+?82|0)\d{8,10}(?!\d)").Value;
-        var date = Regex.Match(name, @"(?<y>20\d{2})[\-_\.](?<m>\d{1,2})[\-_\.](?<d>\d{1,2})");
+        // Samsung call-recording names currently arrive in three forms:
+        //   이름.직책.기관_전화번호_yyyyMMddHHmmss
+        //   이름.생년.진료과_전화번호_yyyyMMddHHmmss
+        //   전화번호_yyyyMMddHHmmss
+        // Keep the original file name untouched; only index the parsed values.
+        var stem = Path.GetFileNameWithoutExtension(name);
+        var structured = Regex.Match(stem,
+            @"^(?<prefix>.+)_(?<phone>(?:\+?82|0)[0-9\- ]{8,16})_(?<stamp>20\d{12})$");
+        string? contactName = null;
+        string phone;
         DateTimeOffset? recorded = null;
-        if (date.Success && DateTimeOffset.TryParse($"{date.Groups["y"].Value}-{date.Groups["m"].Value}-{date.Groups["d"].Value}", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsed)) recorded = parsed;
+        if (structured.Success)
+        {
+            phone = structured.Groups["phone"].Value;
+            var prefixParts = structured.Groups["prefix"].Value.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (prefixParts.Length >= 3) contactName = prefixParts[0];
+            if (DateTimeOffset.TryParseExact(structured.Groups["stamp"].Value, "yyyyMMddHHmmss",
+                    CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var timestamp)) recorded = timestamp;
+        }
+        else
+        {
+            phone = Regex.Match(name, @"(?<!\d)(?:\+?82|0)\d{8,10}(?!\d)").Value;
+            var date = Regex.Match(name, @"(?<y>20\d{2})[\-_\.]?(?<m>\d{2})[\-_\.]?(?<d>\d{2})");
+            if (date.Success && DateTimeOffset.TryParse($"{date.Groups["y"].Value}-{date.Groups["m"].Value}-{date.Groups["d"].Value}", CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsed)) recorded = parsed;
+        }
         return new BackupManifestItem(relativePath, name, size, modified, sha256, "recording", null, recorded,
-            string.IsNullOrEmpty(phone) ? null : PhoneNumberNormalizer.Normalize(phone), null);
+            string.IsNullOrEmpty(phone) ? null : PhoneNumberNormalizer.Normalize(phone), contactName);
     }
 }
 

@@ -89,8 +89,10 @@ public sealed class LocalServer : IDisposable
                 var actual = await BackupService.ComputeSha256Async(temp);
                 if (!actual.Equals(sha, StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new { error = "hash_mismatch" });
                 await using var input = File.OpenRead(temp);
-                var item = new BackupManifestItem(relative, string.IsNullOrWhiteSpace(name) ? Path.GetFileName(relative) : name,
-                    new FileInfo(temp).Length, DateTimeOffset.UtcNow, sha, string.IsNullOrWhiteSpace(category) ? "file" : category, null, null, null, null);
+                var item = string.Equals(category, "recording", StringComparison.OrdinalIgnoreCase)
+                    ? BackupService.ParseRecording(relative, new FileInfo(temp).Length, DateTimeOffset.UtcNow, sha)
+                    : new BackupManifestItem(relative, string.IsNullOrWhiteSpace(name) ? Path.GetFileName(relative) : name,
+                        new FileInfo(temp).Length, DateTimeOffset.UtcNow, sha, string.IsNullOrWhiteSpace(category) ? "file" : category, null, null, null, null);
                 var result = await _backups.StoreAsync(deviceId.Value, runId, item, input);
                 return Results.Ok(new { result.Sha256, result.PresentationPath });
             }

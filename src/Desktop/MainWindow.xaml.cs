@@ -26,6 +26,7 @@ public partial class MainWindow : Window
             await RefreshMembersAsync();
             await RefreshContactsAsync();
             await RefreshFilesAsync();
+            await RefreshGeneralFilesAsync();
             var schedules = await App.Services.Schedules.ListAsync();
             var schedule = schedules.FirstOrDefault();
             ScheduleTimesTextBox.Text = schedule?.Times.Length > 0 ? string.Join(", ", schedule.Times) : "19:00";
@@ -118,6 +119,7 @@ public partial class MainWindow : Window
             };
             if (run.Finished is not null) LastBackupText.Text = run.Finished.Value.ToLocalTime().ToString("MM-dd HH:mm");
             if (string.IsNullOrWhiteSpace(SearchBox.Text)) await RefreshFilesAsync();
+            if (string.IsNullOrWhiteSpace(GeneralSearchBox.Text)) await RefreshGeneralFilesAsync();
         }
         catch (Exception ex) { BackupProgressText.Text = $"상태 확인 실패: {ex.Message}"; }
     }
@@ -211,14 +213,42 @@ public partial class MainWindow : Window
     {
         await RefreshFilesAsync(SearchBox.Text.Trim());
     }
-    private async void FileCategoryFilter_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    private async void SearchGeneralFiles_Click(object sender, RoutedEventArgs e)
     {
-        if (IsLoaded) await RefreshFilesAsync(SearchBox.Text.Trim());
+        await RefreshGeneralFilesAsync(GeneralSearchBox.Text.Trim());
     }
     private async Task RefreshFilesAsync(string term = "")
     {
-        var category = (FileCategoryFilter?.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag?.ToString() ?? "";
-        var rows = await App.Services.Database.QueryAsync("SELECT category,recorded_at,parsed_contact_name,original_file_name,verified_at FROM backup_items WHERE ($term='' OR original_file_name LIKE '%'||$term||'%' OR parsed_contact_name LIKE '%'||$term||'%' OR parsed_phone_number LIKE '%'||$term||'%') AND ($category='' OR category=$category) ORDER BY COALESCE(recorded_at,last_seen_at) DESC LIMIT 300", r => new { Category = CategoryLabel(r.GetString(0)), RecordedAt = r.IsDBNull(1) ? "미확인" : r.GetString(1), ParsedContactName = r.IsDBNull(2) ? "미확인" : r.GetString(2), OriginalFileName = r.GetString(3), Status = r.IsDBNull(4) ? "대기" : "검증 완료" }, p => { p.AddWithValue("$term", term); p.AddWithValue("$category", category); });
+        var rows = await App.Services.Database.QueryAsync("""
+            SELECT COALESCE(m.name,'미등록') AS member_name, b.category, b.recorded_at,
+                   COALESCE(b.parsed_contact_name, (SELECT c.display_name FROM contacts c
+                     JOIN contact_phones cp ON cp.contact_id=c.id
+                     WHERE c.deleted_at IS NULL AND cp.normalized=b.parsed_phone_number LIMIT 1)),
+                   b.original_file_name, b.verified_at
+            FROM backup_items b
+            JOIN devices d ON d.id=b.device_id
+            LEFT JOIN members m ON m.id=d.member_id
+            WHERE b.category='recording'
+              AND ($term='' OR b.original_file_name LIKE '%'||$term||'%'
+                   OR b.parsed_contact_name LIKE '%'||$term||'%'
+                   OR b.parsed_phone_number LIKE '%'||$term||'%')
+            ORDER BY COALESCE(b.recorded_at,b.last_seen_at) DESC LIMIT 300
+            """, r => new { MemberName = r.GetString(0), Category = CategoryLabel(r.GetString(1)), RecordedAt = r.IsDBNull(2) ? "미확인" : r.GetString(2), ParsedContactName = r.IsDBNull(3) ? "미확인" : r.GetString(3), OriginalFileName = r.GetString(4), Status = r.IsDBNull(5) ? "대기" : "검증 완료" }, p => p.AddWithValue("$term", term));
+        RecordingGrid.ItemsSource = rows;
+    }
+
+    private async Task RefreshGeneralFilesAsync(string term = "")
+    {
+        var rows = await App.Services.Database.QueryAsync("""
+            SELECT COALESCE(m.name,'미등록') AS member_name, b.category, b.last_modified_at,
+                   b.original_file_name, b.verified_at
+            FROM backup_items b
+            JOIN devices d ON d.id=b.device_id
+            LEFT JOIN members m ON m.id=d.member_id
+            WHERE b.category<>'recording'
+              AND ($term='' OR b.original_file_name LIKE '%'||$term||'%' OR b.relative_path LIKE '%'||$term||'%')
+            ORDER BY b.last_modified_at DESC LIMIT 300
+            """, r => new { MemberName = r.GetString(0), Category = CategoryLabel(r.GetString(1)), LastModifiedAt = r.IsDBNull(2) ? "미확인" : r.GetString(2), OriginalFileName = r.GetString(3), Status = r.IsDBNull(4) ? "대기" : "검증 완료" }, p => p.AddWithValue("$term", term));
         FilesGrid.ItemsSource = rows;
     }
     private static string CategoryLabel(string category) => category switch { "recording" => "통화녹음", "image" => "사진", "video" => "영상", "document" => "문서", "audio" => "음성", _ => "기타" };
