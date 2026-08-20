@@ -101,6 +101,14 @@ public sealed class DatabaseService : IDisposable
                 UPDATE backup_items SET category='document' WHERE category IN ('file','other') AND (lower(relative_path) LIKE '%.pdf' OR lower(relative_path) LIKE '%.doc' OR lower(relative_path) LIKE '%.docx' OR lower(relative_path) LIKE '%.xls' OR lower(relative_path) LIKE '%.xlsx' OR lower(relative_path) LIKE '%.hwp' OR lower(relative_path) LIKE '%.txt');
                 """;
             await categoryFix.ExecuteNonQueryAsync();
+            await using var staleRuns = connection.CreateCommand();
+            staleRuns.CommandText = """
+                UPDATE sync_runs SET status=3,finished_at=$at,error='중단된 백업 회차(재시작 필요)'
+                WHERE status=0 AND COALESCE((SELECT updated_at FROM sync_progress p WHERE p.sync_run_id=sync_runs.id),started_at) < $cutoff;
+                """;
+            staleRuns.Parameters.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O"));
+            staleRuns.Parameters.AddWithValue("$cutoff", DateTimeOffset.UtcNow.AddMinutes(-10).ToString("O"));
+            await staleRuns.ExecuteNonQueryAsync();
         }
         finally { _gate.Release(); }
     }
