@@ -51,6 +51,21 @@ public sealed class LocalServer : IDisposable
         _app.MapGet("/api/v1/health", () => Results.Ok(new { apiVersion = "1", machine = Environment.MachineName }));
         _app.MapGet("/api/v1/device/ping", async (HttpContext context) =>
             await AuthenticateAsync(context) is null ? Results.Unauthorized() : Results.Ok(new { connected = true, serverTime = DateTimeOffset.UtcNow }));
+        _app.MapGet("/api/v1/backup/requests", async (HttpContext context) =>
+        {
+            var deviceId = await AuthenticateAsync(context); if (deviceId is null) return Results.Unauthorized();
+            var rows = await _database.QueryAsync("""
+                SELECT id FROM backup_requests
+                WHERE device_id=$device AND status=0
+                ORDER BY created_at LIMIT 3
+                """, r => r.GetString(0), p => p.AddWithValue("$device", deviceId.Value.ToString()));
+            foreach (var requestId in rows)
+                await _database.ExecuteAsync("UPDATE backup_requests SET status=1,started_at=$at WHERE id=$id AND device_id=$device AND status IN (0,1)", p =>
+                {
+                    p.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O")); p.AddWithValue("$id", requestId); p.AddWithValue("$device", deviceId.Value.ToString());
+                });
+            return Results.Ok(rows.Select(id => new { requestId = id }));
+        });
         _app.MapPost("/api/v1/pair/claim", async (HttpContext context) =>
         {
             try

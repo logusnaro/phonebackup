@@ -136,6 +136,17 @@ class MainActivity : ComponentActivity() {
                 } else try {
                     val client = NetworkClient(this@MainActivity, store)
                     client.ping(config)
+                    if (!backupRunning.value && !deletionRunning.value) {
+                        val requests = runCatching { client.fetchBackupRequests(config) }.getOrDefault(emptyList())
+                        if (requests.isNotEmpty()) {
+                            runOnUiThread {
+                                if (!backupRunning.value && !deletionRunning.value) {
+                                    startBackup()
+                                    status.value = "PC 요청으로 백업을 시작했습니다."
+                                }
+                            }
+                        }
+                    }
                     if (!backupRunning.value && !deletionRunning.value && remoteDeletionRunning.compareAndSet(false, true)) {
                         Thread { processRemoteDeletionRequests(config) }.start()
                     }

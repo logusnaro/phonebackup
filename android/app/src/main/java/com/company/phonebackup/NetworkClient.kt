@@ -33,6 +33,7 @@ import java.security.cert.CertificateException
 @Serializable data class DeletionItemDto(val id: String, val relativePath: String, val sha256: String)
 @Serializable data class DeletionResultDto(val id: String, val relativePath: String, val deleted: Boolean, val reason: String? = null)
 @Serializable data class DeletionRequestDto(val requestId: String, val items: List<DeletionItemDto>)
+@Serializable data class BackupRequestDto(val requestId: String)
 
 class NetworkClient(private val context: Context, private val store: PairingStore) {
     private val json = Json { ignoreUnknownKeys = true }
@@ -89,6 +90,10 @@ class NetworkClient(private val context: Context, private val store: PairingStor
         authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/device/ping").headers(headers(config)).get().build()).execute().use {
             if (!it.isSuccessful) error("PC 응답 오류: ${it.code}")
         }
+    }
+    fun fetchBackupRequests(config: PairingConfig): List<BackupRequestDto> {
+        val response = authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/backup/requests").headers(headers(config)).get().build()).execute()
+        response.use { if (!it.isSuccessful) error("PC 백업 요청 조회 실패: ${it.code}"); return json.decodeFromString(it.body!!.string()) }
     }
     fun progress(config: PairingConfig, runId: String, processed: Int, total: Int, currentFile: String?, stage: String) {
         val payload = ProgressPayload(runId, processed, total, currentFile, stage)

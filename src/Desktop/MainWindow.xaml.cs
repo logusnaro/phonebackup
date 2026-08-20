@@ -11,7 +11,7 @@ namespace PhoneBackup.Desktop;
 
 public partial class MainWindow : Window
 {
-    private static readonly Guid ScheduleId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    private static readonly Guid LegacyScheduleId = Guid.Parse("00000000-0000-0000-0000-000000000001");
     private readonly ObservableCollection<ActivityRow> _activity = new();
     private readonly ObservableCollection<Member> _members = new();
     private bool _scheduleLoaded;
@@ -26,17 +26,14 @@ public partial class MainWindow : Window
         {
             ServerText.Text = $"수신 대기: {App.Services.Server.ServerUrl}";
             await RefreshMembersAsync();
+            await RefreshScheduleDevicesAsync();
             await RefreshContactsAsync();
             var backfilled = await App.Services.Backups.BackfillRecordingMetadataAsync();
             if (backfilled > 0) StatusText.Text = $"기존 통화 녹음 {backfilled}개 파일명을 색인했습니다.";
             await RefreshFilesAsync();
             await RefreshGeneralFilesAsync();
             await RefreshDeletionCountAsync();
-            var schedules = await App.Services.Schedules.ListAsync();
-            var schedule = schedules.FirstOrDefault();
-            ScheduleTimesTextBox.Text = schedule?.Times.Length > 0 ? string.Join(", ", schedule.Times) : "19:00";
-            _scheduleLoaded = true;
-            ScheduleEnabledCheckBox.IsChecked = schedule?.Enabled == true;
+            await LoadScheduleForSelectedDeviceAsync();
             await RefreshLiveStatusAsync();
             _statusTimer.Tick += async (_, _) => await RefreshLiveStatusAsync();
             _statusTimer.Start();
@@ -86,13 +83,17 @@ public partial class MainWindow : Window
         var window = new PairingWindow(ticket, member.Name) { Owner = this };
         window.ShowDialog();
         await RefreshMembersAsync();
+        await RefreshScheduleDevicesAsync();
     }
 
     private async void ManualBackup_Click(object sender, RoutedEventArgs e)
     {
-        await RefreshLiveStatusAsync();
-        StatusText.Text = "휴대폰에서 ‘지금 백업’을 누르면 이 화면에 진행률이 표시됩니다.";
-        _activity.Insert(0, new ActivityRow(DateTime.Now, "선택 기기", "안내", "휴대폰의 ‘지금 백업’을 누르세요. PC가 자동으로 진행 상황을 표시합니다."));
+        if (SelectedScheduleDeviceId() is not Guid deviceId)
+        {
+            StatusText.Text = "설정에서 대상 휴대폰을 먼저 선택하세요.";
+            return;
+        }
+        await QueueBackupRequestAsync(deviceId);
     }
 
     private async Task RefreshLiveStatusAsync()
@@ -136,6 +137,76 @@ public partial class MainWindow : Window
         await SaveScheduleAsync(ScheduleEnabledCheckBox.IsChecked == true);
     }
 
+    private async void ScheduleDeviceComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (!_scheduleLoaded) return;
+        await LoadScheduleForSelectedDeviceAsync();
+    }
+
+    private async Task RefreshScheduleDevicesAsync()
+    {
+        var rows = await App.Services.Database.QueryAsync("""
+            SELECT d.id, COALESCE(m.name,'미등록') || ' · ' || d.display_name ||
+                   CASE WHEN d.model IS NULL OR d.model='' THEN '' ELSE ' (' || d.model || ')' END
+            FROM devices d LEFT JOIN members m ON m.id=d.member_id
+            WHERE d.status<>3 ORDER BY COALESCE(m.name,''),d.display_name
+            """, r => new DeviceChoice(Guid.Parse(r.GetString(0)), r.GetString(1)));
+        _scheduleLoaded = false;
+        ScheduleDeviceComboBox.ItemsSource = rows;
+        ScheduleDeviceComboBox.SelectedIndex = rows.Count == 0 ? -1 : 0;
+        _scheduleLoaded = true;
+        await LoadScheduleForSelectedDeviceAsync();
+    }
+
+    private Guid? SelectedScheduleDeviceId() => ScheduleDeviceComboBox.SelectedValue is Guid id ? id :
+        ScheduleDeviceComboBox.SelectedItem is DeviceChoice choice ? choice.Id : null;
+
+    private async Task LoadScheduleForSelectedDeviceAsync()
+    {
+        _scheduleLoaded = false;
+        var deviceId = SelectedScheduleDeviceId();
+        if (deviceId is null)
+        {
+            ScheduleEnabledCheckBox.IsChecked = false;
+            ScheduleEnabledCheckBox.IsEnabled = false;
+            ScheduleTimesTextBox.Text = "19:00";
+            ScheduleTimesTextBox.IsEnabled = false;
+            _scheduleLoaded = true;
+            return;
+        }
+        ScheduleEnabledCheckBox.IsEnabled = true;
+        ScheduleTimesTextBox.IsEnabled = true;
+        var schedules = await App.Services.Schedules.ListAsync();
+        var schedule = schedules.FirstOrDefault(x => x.DeviceId == deviceId) ?? schedules.FirstOrDefault(x => x.Id == LegacyScheduleId && x.DeviceId is null);
+        ScheduleTimesTextBox.Text = schedule?.Times.Length > 0 ? string.Join(", ", schedule.Times) : "19:00";
+        ScheduleEnabledCheckBox.IsChecked = schedule?.Enabled == true;
+        _scheduleLoaded = true;
+    }
+
+    private async void ManualBackupForSelectedDevice_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedScheduleDeviceId() is not Guid deviceId)
+        {
+            StatusText.Text = "연결된 휴대폰이 없습니다. 먼저 기기를 연결하세요.";
+            return;
+        }
+        await QueueBackupRequestAsync(deviceId);
+    }
+
+    private async Task QueueBackupRequestAsync(Guid deviceId)
+    {
+        var label = await App.Services.Database.QueryAsync("SELECT display_name FROM devices WHERE id=$id", r => r.GetString(0), p => p.AddWithValue("$id", deviceId.ToString()));
+        if (label.Count == 0) { StatusText.Text = "대상 휴대폰을 찾을 수 없습니다."; return; }
+        var requestId = Guid.NewGuid();
+        await App.Services.Database.ExecuteAsync("INSERT INTO backup_requests(id,device_id,status,created_at) VALUES($id,$device,0,$at)", p =>
+        {
+            p.AddWithValue("$id", requestId.ToString()); p.AddWithValue("$device", deviceId.ToString()); p.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O"));
+        });
+        StatusText.Text = $"{label[0]}에 백업 요청을 보냈습니다. 휴대폰 앱이 Wi‑Fi로 연결되면 자동으로 시작합니다.";
+        _activity.Insert(0, new ActivityRow(DateTime.Now, label[0], "백업 요청", "PC에서 백업을 요청했습니다. 휴대폰 앱이 자동으로 시작합니다."));
+        await RefreshLiveStatusAsync();
+    }
+
     private async void SaveScheduleTime_Click(object sender, RoutedEventArgs e)
     {
         if (!TryParseScheduleTimes(ScheduleTimesTextBox.Text, out var times, out var error))
@@ -157,8 +228,13 @@ public partial class MainWindow : Window
     private async Task SaveScheduleAsync(bool enabled, string[]? times = null)
     {
         if (times is null && !TryParseScheduleTimes(ScheduleTimesTextBox.Text, out times, out _)) times = ["19:00"];
-        var existing = (await App.Services.Schedules.ListAsync()).FirstOrDefault(x => x.Id == ScheduleId);
-        var schedule = new Services.BackupSchedule(ScheduleId, existing?.DeviceId, existing?.Category ?? "all", enabled,
+        if (SelectedScheduleDeviceId() is not Guid deviceId)
+        {
+            StatusText.Text = "설정할 휴대폰을 먼저 선택하세요.";
+            return;
+        }
+        var existing = (await App.Services.Schedules.ListAsync()).FirstOrDefault(x => x.DeviceId == deviceId);
+        var schedule = new Services.BackupSchedule(existing?.Id ?? deviceId, deviceId, existing?.Category ?? "all", enabled,
             existing?.Weekdays is { Length: > 0 } weekdays ? weekdays : [1, 2, 3, 4, 5, 6, 7], times!, existing?.LastOccurrence);
         await App.Services.Schedules.SaveAsync(schedule);
         StatusText.Text = enabled ? "예약 백업을 활성화했습니다." : "예약 백업을 비활성화했습니다.";
@@ -418,5 +494,6 @@ public partial class MainWindow : Window
         return dialog.ShowDialog() == true ? dialog.Value : null;
     }
 
+    private sealed record DeviceChoice(Guid Id, string Label);
     public sealed record ActivityRow(DateTime Time, string Target, string Status, string Message);
 }
