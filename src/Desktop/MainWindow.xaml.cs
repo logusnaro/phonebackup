@@ -235,7 +235,7 @@ public partial class MainWindow : Window
         var grid = sender is System.Windows.Controls.Button button && button.Tag is string tag && tag == "general" ? FilesGrid : RecordingGrid;
         var selected = GetSelectedRows(grid);
         if (selected.Count == 0) { MessageBox.Show("삭제할 파일을 먼저 선택하세요.", "모바일 삭제"); return; }
-        if (MessageBox.Show($"선택한 {selected.Count}개 파일을 휴대폰 원본에서 삭제 요청할까요? PC 백업본은 유지됩니다.", "모바일 파일 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (MessageBox.Show($"[최종 경고]\n\n선택한 {selected.Count}개 파일의 휴대폰 원본 삭제를 요청합니다.\nPC 백업본은 유지되지만, 휴대폰 파일은 해시 확인 후 삭제되며 복구할 수 없습니다.\n\n계속하시겠습니까?", "모바일 파일 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
         var queued = 0;
         foreach (var deviceGroup in selected.GroupBy(x => x.DeviceId))
@@ -263,7 +263,7 @@ public partial class MainWindow : Window
         var grid = sender is System.Windows.Controls.Button button && button.Tag is string tag && tag == "general" ? FilesGrid : RecordingGrid;
         var selected = GetSelectedRows(grid);
         if (selected.Count == 0) { MessageBox.Show("삭제할 파일을 먼저 선택하세요.", "로컬 삭제"); return; }
-        if (MessageBox.Show($"선택한 {selected.Count}개 파일의 PC 백업본을 삭제할까요? 휴대폰 원본에는 영향을 주지 않습니다.", "PC 로컬 파일 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (MessageBox.Show($"[최종 경고]\n\n선택한 {selected.Count}개 파일의 PC 백업본을 영구 삭제합니다.\n휴대폰 원본에는 영향이 없지만, 이 PC의 백업 파일과 목록은 삭제되며 복구할 수 없습니다.\n\n계속하시겠습니까?", "PC 로컬 파일 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
         var deleted = 0;
         foreach (var row in selected)
