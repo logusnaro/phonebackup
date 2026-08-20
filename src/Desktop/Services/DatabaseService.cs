@@ -85,6 +85,10 @@ public sealed class DatabaseService : IDisposable
                   id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id),
                   relative_path TEXT NOT NULL, sha256 TEXT NOT NULL, verified_at TEXT NOT NULL,
                   eligible_at TEXT NOT NULL, approved_at TEXT);
+                CREATE TABLE IF NOT EXISTS deletion_requests(
+                  id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id),
+                  items_json TEXT NOT NULL, status INTEGER NOT NULL DEFAULT 0,
+                  created_at TEXT NOT NULL, completed_at TEXT, result_json TEXT);
                 CREATE TABLE IF NOT EXISTS schedules(
                   id TEXT PRIMARY KEY, device_id TEXT REFERENCES devices(id), category TEXT NOT NULL,
                   enabled INTEGER NOT NULL DEFAULT 0, weekdays_json TEXT NOT NULL, times_json TEXT NOT NULL,

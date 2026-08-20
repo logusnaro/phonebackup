@@ -137,6 +137,50 @@ public sealed class LocalServer : IDisposable
             }
             return Results.Ok(rows.Select(x => new { id = x.Id, relativePath = x.RelativePath, sha256 = x.Sha256 }));
         });
+        _app.MapGet("/api/v1/deletions/requests", async (HttpContext context) =>
+        {
+            var deviceId = await AuthenticateAsync(context); if (deviceId is null) return Results.Unauthorized();
+            var cutoff = DateTimeOffset.UtcNow.AddMinutes(-10).ToString("O");
+            var rows = await _database.QueryAsync("""
+                SELECT id,items_json FROM deletion_requests
+                WHERE device_id=$device AND (status=0 OR (status=1 AND created_at <= $cutoff))
+                ORDER BY created_at LIMIT 5
+                """, r => new { Id = r.GetString(0), Items = System.Text.Json.JsonDocument.Parse(r.GetString(1)).RootElement.Clone() }, p =>
+            {
+                p.AddWithValue("$device", deviceId.Value.ToString()); p.AddWithValue("$cutoff", cutoff);
+            });
+            foreach (var row in rows)
+                await _database.ExecuteAsync("UPDATE deletion_requests SET status=1 WHERE id=$id AND device_id=$device", p => { p.AddWithValue("$id", row.Id); p.AddWithValue("$device", deviceId.Value.ToString()); });
+            return Results.Ok(rows.Select(x => new { requestId = x.Id, items = x.Items }));
+        });
+        _app.MapPost("/api/v1/deletions/requests/{requestId}/results", async (HttpContext context) =>
+        {
+            var deviceId = await AuthenticateAsync(context); if (deviceId is null) return Results.Unauthorized();
+            var requestId = context.Request.RouteValues["requestId"]?.ToString();
+            if (!Guid.TryParse(requestId, out _)) return Results.BadRequest();
+            var results = await context.Request.ReadFromJsonAsync<List<DeletionResultPayload>>();
+            if (results is null) return Results.BadRequest();
+            var request = await _database.QueryAsync("SELECT 1 FROM deletion_requests WHERE id=$id AND device_id=$device AND status=1 LIMIT 1", _ => true,
+                p => { p.AddWithValue("$id", requestId); p.AddWithValue("$device", deviceId.Value.ToString()); });
+            if (request.Count == 0) return Results.NotFound();
+            await _database.ExecuteAsync("UPDATE deletion_requests SET status=2,completed_at=$at,result_json=$results WHERE id=$id AND device_id=$device", p =>
+            {
+                p.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O")); p.AddWithValue("$results", System.Text.Json.JsonSerializer.Serialize(results));
+                p.AddWithValue("$id", requestId); p.AddWithValue("$device", deviceId.Value.ToString());
+            });
+            foreach (var result in results.Where(x => x.Deleted))
+            {
+                await _database.ExecuteAsync("UPDATE deletion_candidates SET approved_at=$at WHERE id=$id AND device_id=$device AND relative_path=$path", p =>
+                {
+                    p.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O")); p.AddWithValue("$id", result.Id.ToString()); p.AddWithValue("$device", deviceId.Value.ToString()); p.AddWithValue("$path", result.RelativePath);
+                });
+                await _database.ExecuteAsync("INSERT INTO audit_log(event_type,subject_id,details_json,created_at) VALUES('file_deleted_on_device',$id,$details,$at)", p =>
+                {
+                    p.AddWithValue("$id", result.Id.ToString()); p.AddWithValue("$details", System.Text.Json.JsonSerializer.Serialize(new { result.RelativePath, result.Reason, requestId })); p.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O"));
+                });
+            }
+            return Results.Ok(new { received = results.Count, deleted = results.Count(x => x.Deleted) });
+        });
         _app.MapPost("/api/v1/deletions/results", async (HttpContext context) =>
         {
             var deviceId = await AuthenticateAsync(context); if (deviceId is null) return Results.Unauthorized();

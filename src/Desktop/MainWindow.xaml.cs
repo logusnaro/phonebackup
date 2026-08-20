@@ -229,15 +229,84 @@ public partial class MainWindow : Window
     {
         await RefreshGeneralFilesAsync(GeneralSearchBox.Text.Trim());
     }
+
+    private async void DeleteMobile_Click(object sender, RoutedEventArgs e)
+    {
+        var grid = sender is System.Windows.Controls.Button button && button.Tag is string tag && tag == "general" ? FilesGrid : RecordingGrid;
+        var selected = GetSelectedRows(grid);
+        if (selected.Count == 0) { MessageBox.Show("삭제할 파일을 먼저 선택하세요.", "모바일 삭제"); return; }
+        if (MessageBox.Show($"선택한 {selected.Count}개 파일을 휴대폰 원본에서 삭제 요청할까요? PC 백업본은 유지됩니다.", "모바일 파일 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+
+        var queued = 0;
+        foreach (var deviceGroup in selected.GroupBy(x => x.DeviceId))
+        {
+            var items = new List<object>();
+            foreach (var row in deviceGroup)
+            {
+                var verified = await App.Services.Database.QueryAsync("SELECT 1 FROM backup_items WHERE id=$id AND device_id=$device AND sha256=$sha AND verified_at IS NOT NULL LIMIT 1", _ => true,
+                    p => { p.AddWithValue("$id", row.BackupItemId); p.AddWithValue("$device", row.DeviceId); p.AddWithValue("$sha", row.Sha256); });
+                if (verified.Count > 0) items.Add(new { id = row.BackupItemId, relativePath = row.RelativePath, sha256 = row.Sha256 });
+            }
+            if (items.Count == 0) continue;
+            await App.Services.Database.ExecuteAsync("INSERT INTO deletion_requests(id,device_id,items_json,status,created_at) VALUES($id,$device,$items,0,$at)", p =>
+            {
+                p.AddWithValue("$id", Guid.NewGuid().ToString()); p.AddWithValue("$device", deviceGroup.Key);
+                p.AddWithValue("$items", System.Text.Json.JsonSerializer.Serialize(items)); p.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O"));
+            });
+            queued += items.Count;
+        }
+        StatusText.Text = queued == 0 ? "검증 완료된 파일만 모바일 삭제 요청을 만들 수 있습니다." : $"모바일 삭제 {queued}개를 요청했습니다. 휴대폰 앱이 연결되면 원본 경로와 해시를 재검사한 뒤 삭제합니다.";
+    }
+
+    private async void DeleteLocal_Click(object sender, RoutedEventArgs e)
+    {
+        var grid = sender is System.Windows.Controls.Button button && button.Tag is string tag && tag == "general" ? FilesGrid : RecordingGrid;
+        var selected = GetSelectedRows(grid);
+        if (selected.Count == 0) { MessageBox.Show("삭제할 파일을 먼저 선택하세요.", "로컬 삭제"); return; }
+        if (MessageBox.Show($"선택한 {selected.Count}개 파일의 PC 백업본을 삭제할까요? 휴대폰 원본에는 영향을 주지 않습니다.", "PC 로컬 파일 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+
+        var deleted = 0;
+        foreach (var row in selected)
+        {
+            if (!TryResolveBackupPath(row, out var presentationPath)) continue;
+            try
+            {
+                if (File.Exists(presentationPath)) File.Delete(presentationPath);
+                var stored = await App.Services.Database.QueryAsync("""
+                    SELECT b.stored_object_id,o.storage_path,
+                           (SELECT COUNT(*) FROM backup_items x WHERE x.stored_object_id=b.stored_object_id)
+                    FROM backup_items b JOIN stored_objects o ON o.id=b.stored_object_id WHERE b.id=$id LIMIT 1
+                    """, r => new { ObjectId = r.GetString(0), StoragePath = r.GetString(1), References = r.GetInt32(2) }, p => p.AddWithValue("$id", row.BackupItemId));
+                await App.Services.Database.ExecuteAsync("DELETE FROM deletion_candidates WHERE id=$id; DELETE FROM backup_items WHERE id=$id;", p => p.AddWithValue("$id", row.BackupItemId));
+                if (stored.Count > 0 && stored[0].References <= 1)
+                {
+                    if (File.Exists(stored[0].StoragePath)) File.Delete(stored[0].StoragePath);
+                    await App.Services.Database.ExecuteAsync("DELETE FROM stored_objects WHERE id=$id", p => p.AddWithValue("$id", stored[0].ObjectId));
+                }
+                await App.Services.Database.ExecuteAsync("INSERT INTO audit_log(event_type,subject_id,details_json,created_at) VALUES('file_deleted_on_pc',$id,$details,$at)", p =>
+                {
+                    p.AddWithValue("$id", row.BackupItemId); p.AddWithValue("$details", System.Text.Json.JsonSerializer.Serialize(new { row.RelativePath, row.OriginalFileName })); p.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O"));
+                });
+                deleted++;
+            }
+            catch (Exception ex) { _activity.Insert(0, new ActivityRow(DateTime.Now, row.MemberName, "삭제 실패", ex.Message)); }
+        }
+        await RefreshFilesAsync(SearchBox.Text.Trim()); await RefreshGeneralFilesAsync(GeneralSearchBox.Text.Trim()); await RefreshDeletionCountAsync();
+        StatusText.Text = $"PC 로컬 백업본 {deleted}개를 삭제했습니다. 휴대폰 원본은 유지됩니다.";
+    }
+
+    private static List<FileRow> GetSelectedRows(System.Windows.Controls.DataGrid grid)
+        => grid.SelectedItems.OfType<FileRow>().Distinct().ToList();
+
     private async Task RefreshFilesAsync(string term = "")
     {
         var rows = await App.Services.Database.QueryAsync("""
-            SELECT b.device_id,d.member_id, b.relative_path, COALESCE(m.name,'미등록') AS member_name, b.category, b.recorded_at,
+            SELECT b.id,b.device_id,d.member_id, b.relative_path, COALESCE(m.name,'미등록') AS member_name, b.category, b.recorded_at,
                    b.parsed_target,
                    COALESCE(b.parsed_contact_name, (SELECT c.display_name FROM contacts c
                      JOIN contact_phones cp ON cp.contact_id=c.id
                      WHERE c.deleted_at IS NULL AND cp.normalized=b.parsed_phone_number LIMIT 1)),
-                   b.parsed_affiliation,b.original_file_name, b.verified_at
+                   b.parsed_affiliation,b.original_file_name, b.verified_at,b.sha256
             FROM backup_items b
             JOIN devices d ON d.id=b.device_id
             LEFT JOIN members m ON m.id=d.member_id
@@ -246,22 +315,22 @@ public partial class MainWindow : Window
                    OR b.parsed_contact_name LIKE '%'||$term||'%'
                    OR b.parsed_phone_number LIKE '%'||$term||'%')
             ORDER BY COALESCE(b.recorded_at,b.last_seen_at) DESC LIMIT 300
-            """, r => new FileRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), CategoryLabel(r.GetString(4)), r.IsDBNull(5) ? "미확인" : r.GetString(5), r.IsDBNull(6) ? "미확인" : r.GetString(6), r.IsDBNull(7) ? "미확인" : r.GetString(7), r.IsDBNull(8) ? "미확인" : r.GetString(8), r.GetString(9), r.IsDBNull(10) ? "대기" : "검증 완료"), p => p.AddWithValue("$term", term));
+            """, r => new FileRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), CategoryLabel(r.GetString(5)), r.IsDBNull(6) ? "미확인" : r.GetString(6), r.IsDBNull(7) ? "미확인" : r.GetString(7), r.IsDBNull(8) ? "미확인" : r.GetString(8), r.IsDBNull(9) ? "미확인" : r.GetString(9), r.GetString(10), r.IsDBNull(11) ? "대기" : "검증 완료", r.GetString(12)), p => p.AddWithValue("$term", term));
         RecordingGrid.ItemsSource = rows;
     }
 
     private async Task RefreshGeneralFilesAsync(string term = "")
     {
         var rows = await App.Services.Database.QueryAsync("""
-            SELECT b.device_id,d.member_id, b.relative_path, COALESCE(m.name,'미등록') AS member_name, b.category, b.last_modified_at,
-                   b.original_file_name, b.verified_at
+            SELECT b.id,b.device_id,d.member_id, b.relative_path, COALESCE(m.name,'미등록') AS member_name, b.category, b.last_modified_at,
+                   b.original_file_name, b.verified_at,b.sha256
             FROM backup_items b
             JOIN devices d ON d.id=b.device_id
             LEFT JOIN members m ON m.id=d.member_id
             WHERE b.category<>'recording'
               AND ($term='' OR b.original_file_name LIKE '%'||$term||'%' OR b.relative_path LIKE '%'||$term||'%')
             ORDER BY b.last_modified_at DESC LIMIT 300
-            """, r => new FileRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), CategoryLabel(r.GetString(4)), null, r.IsDBNull(5) ? "미확인" : r.GetString(5), "미확인", "미확인", r.GetString(6), r.IsDBNull(7) ? "대기" : "검증 완료"), p => p.AddWithValue("$term", term));
+            """, r => new FileRow(r.GetString(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), CategoryLabel(r.GetString(5)), null, "미확인", "미확인", "미확인", r.GetString(7), r.IsDBNull(8) ? "대기" : "검증 완료", r.GetString(9)), p => p.AddWithValue("$term", term));
         FilesGrid.ItemsSource = rows;
     }
     private static string CategoryLabel(string category) => category switch { "recording" => "통화녹음", "image" => "사진", "video" => "영상", "document" => "문서", "audio" => "음성", _ => "기타" };
@@ -329,9 +398,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private sealed record FileRow(string DeviceId, string MemberId, string RelativePath, string MemberName,
+    private sealed record FileRow(string BackupItemId, string DeviceId, string MemberId, string RelativePath, string MemberName,
         string Category, string? RecordedAt, string? ParsedTarget, string ParsedContactName,
-        string ParsedAffiliation, string OriginalFileName, string Status);
+        string ParsedAffiliation, string OriginalFileName, string Status, string Sha256);
     private async Task RefreshDeletionCountAsync()
     {
         var count = await App.Services.Database.QueryAsync("SELECT COUNT(*) FROM deletion_candidates WHERE approved_at IS NULL AND eligible_at <= $now", r => r.GetInt32(0), p => p.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O")));

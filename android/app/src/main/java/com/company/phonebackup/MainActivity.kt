@@ -26,6 +26,7 @@ import androidx.work.NetworkType
 import androidx.work.BackoffPolicy
 import kotlinx.coroutines.delay
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : ComponentActivity() {
     private lateinit var store: PairingStore
@@ -38,6 +39,7 @@ class MainActivity : ComponentActivity() {
     private val backupCurrentFile = mutableStateOf("")
     private val deletionStatus = mutableStateOf("")
     private val deletionRunning = mutableStateOf(false)
+    private val remoteDeletionRunning = AtomicBoolean(false)
     private var treeUri: Uri? = null
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> uri?.let { treeUri = it; contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION); getSharedPreferences("sync", MODE_PRIVATE).edit().putString("treeUri", it.toString()).apply() } }
     private val usbPairingFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -132,7 +134,11 @@ class MainActivity : ComponentActivity() {
                 } else if (config == null) {
                     "● PC 미등록"
                 } else try {
-                    NetworkClient(this@MainActivity, store).ping(config)
+                    val client = NetworkClient(this@MainActivity, store)
+                    client.ping(config)
+                    if (!backupRunning.value && !deletionRunning.value && remoteDeletionRunning.compareAndSet(false, true)) {
+                        Thread { processRemoteDeletionRequests(config) }.start()
+                    }
                     "● PC 사용 가능"
                 } catch (e: Exception) {
                     "● PC 등록됨 · 백업 시 Wi‑Fi로 자동 연결"
@@ -189,16 +195,8 @@ class MainActivity : ComponentActivity() {
         Thread {
             try {
                 val client = NetworkClient(this@MainActivity, store)
-                val repository = FileRepository(this@MainActivity)
-                val tree = getSharedPreferences("sync", MODE_PRIVATE).getString("treeUri", null)
-                val files = (if (tree.isNullOrBlank()) repository.listDefaultFiles(config.deviceId) else repository.listFiles(Uri.parse(tree))).associateBy { it.second }
                 val candidates = client.fetchDeletionCandidates(config, 90)
-                val results = candidates.map { candidate ->
-                    val uri = files[candidate.relativePath]
-                    if (uri == null) DeletionResultDto(candidate.id, candidate.relativePath, false, "휴대폰에서 파일을 찾지 못함")
-                    else runCatching { if (repository.deleteIfMatches(uri.first, candidate.sha256)) DeletionResultDto(candidate.id, candidate.relativePath, true) else DeletionResultDto(candidate.id, candidate.relativePath, false, "해시가 일치하지 않음") }
-                        .getOrElse { DeletionResultDto(candidate.id, candidate.relativePath, false, it.message ?: "삭제 확인 실패") }
-                }
+                val results = deleteRequestedItems(config, candidates)
                 client.reportDeletionResults(config, results)
                 val deleted = results.count { it.deleted }
                 runOnUiThread { deletionRunning.value = false; deletionStatus.value = "삭제 완료 ${deleted}개 · 건너뜀 ${results.size - deleted}개" }
@@ -206,6 +204,34 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread { deletionRunning.value = false; deletionStatus.value = "삭제 실패: ${e::class.simpleName}: ${e.message}" }
             }
         }.start()
+    }
+
+    private fun processRemoteDeletionRequests(config: PairingConfig) {
+        try {
+            val client = NetworkClient(this@MainActivity, store)
+            client.fetchDeletionRequests(config).forEach { request ->
+                val results = deleteRequestedItems(config, request.items)
+                client.reportDeletionRequestResults(config, request.requestId, results)
+                val deleted = results.count { it.deleted }
+                runOnUiThread { deletionStatus.value = "PC 선택 삭제 완료 ${deleted}개 · 건너뜀 ${results.size - deleted}개" }
+            }
+        } catch (e: Exception) {
+            Log.e("PhoneBackup", "remote deletion failed", e)
+        } finally {
+            remoteDeletionRunning.set(false)
+        }
+    }
+
+    private fun deleteRequestedItems(config: PairingConfig, items: List<DeletionItemDto>): List<DeletionResultDto> {
+        val repository = FileRepository(this@MainActivity)
+        val tree = getSharedPreferences("sync", MODE_PRIVATE).getString("treeUri", null)
+        val files = (if (tree.isNullOrBlank()) repository.listDefaultFiles(config.deviceId) else repository.listFiles(Uri.parse(tree))).associateBy { it.second }
+        return items.map { item ->
+            val uri = files[item.relativePath]
+            if (uri == null) DeletionResultDto(item.id, item.relativePath, false, "휴대폰에서 파일을 찾지 못함")
+            else runCatching { if (repository.deleteIfMatches(uri.first, item.sha256)) DeletionResultDto(item.id, item.relativePath, true) else DeletionResultDto(item.id, item.relativePath, false, "해시가 일치하지 않음") }
+                .getOrElse { DeletionResultDto(item.id, item.relativePath, false, it.message ?: "삭제 확인 실패") }
+        }
     }
 }
 

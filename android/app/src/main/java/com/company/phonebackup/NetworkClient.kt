@@ -32,6 +32,7 @@ import java.security.cert.CertificateException
 @Serializable data class ProgressPayload(val syncRunId: String, val filesProcessed: Int, val filesTotal: Int, val currentFile: String?, val stage: String)
 @Serializable data class DeletionItemDto(val id: String, val relativePath: String, val sha256: String)
 @Serializable data class DeletionResultDto(val id: String, val relativePath: String, val deleted: Boolean, val reason: String? = null)
+@Serializable data class DeletionRequestDto(val requestId: String, val items: List<DeletionItemDto>)
 
 class NetworkClient(private val context: Context, private val store: PairingStore) {
     private val json = Json { ignoreUnknownKeys = true }
@@ -127,6 +128,14 @@ class NetworkClient(private val context: Context, private val store: PairingStor
     fun reportDeletionResults(config: PairingConfig, results: List<DeletionResultDto>) {
         val body = json.encodeToString(ListSerializer(DeletionResultDto.serializer()), results).toRequestBody("application/json".toMediaType())
         authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/deletions/results").headers(headers(config)).post(body).build()).execute().use { if (!it.isSuccessful) error("삭제 결과 저장 실패: ${it.code}") }
+    }
+    fun fetchDeletionRequests(config: PairingConfig): List<DeletionRequestDto> {
+        val response = authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/deletions/requests").headers(headers(config)).get().build()).execute()
+        response.use { if (!it.isSuccessful) error("선택 삭제 요청 조회 실패: ${it.code}"); return json.decodeFromString(it.body!!.string()) }
+    }
+    fun reportDeletionRequestResults(config: PairingConfig, requestId: String, results: List<DeletionResultDto>) {
+        val body = json.encodeToString(ListSerializer(DeletionResultDto.serializer()), results).toRequestBody("application/json".toMediaType())
+        authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/deletions/requests/$requestId/results").headers(headers(config)).post(body).build()).execute().use { if (!it.isSuccessful) error("선택 삭제 결과 저장 실패: ${it.code}") }
     }
     fun finish(config: PairingConfig, runId: String, seen: Int, stored: Int, error: String? = null) {
         val body = json.encodeToString(FinishPayload.serializer(), FinishPayload(runId, if (error == null) "Completed" else "Failed", seen, stored, error)).toRequestBody("application/json".toMediaType())
