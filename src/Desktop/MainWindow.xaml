@@ -1,7 +1,7 @@
 <Window x:Class="PhoneBackup.Desktop.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="업무폰 통합 백업" Height="760" Width="1180" MinHeight="620" MinWidth="920"
+        Title="업무폰 통합 백업" Icon="Assets/phonebackup.ico" Height="760" Width="1180" MinHeight="620" MinWidth="920"
         WindowStartupLocation="CenterScreen">
   <Grid Margin="20">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>

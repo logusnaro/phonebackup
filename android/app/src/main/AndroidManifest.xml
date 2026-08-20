@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-    <application android:theme="@style/Theme.PhoneBackup" android:label="업무폰 백업" android:allowBackup="false" android:supportsRtl="true">
+    <application android:theme="@style/Theme.PhoneBackup" android:label="업무폰 백업" android:icon="@drawable/ic_phonebackup" android:roundIcon="@drawable/ic_phonebackup" android:allowBackup="false" android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" />
