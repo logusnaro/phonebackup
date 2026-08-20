@@ -271,11 +271,14 @@ public partial class MainWindow : Window
         if ((sender as System.Windows.Controls.DataGrid)?.SelectedItem is FileRow row) OpenFileOrFolder(row);
     }
 
+    private void OpenFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button { DataContext: FileRow row }) OpenFolder(row);
+    }
+
     private void OpenFileOrFolder(FileRow row)
     {
-        string path;
-        try { path = Path.Combine(App.Services.Backups.Root, "members", row.MemberId, "devices", row.DeviceId, BackupService.NormalizeRelativePath(row.RelativePath)); }
-        catch (Exception ex) { StatusText.Text = $"파일 경로를 열 수 없습니다: {ex.Message}"; return; }
+        if (!TryResolveBackupPath(row, out var path)) return;
         try
         {
             if (File.Exists(path))
@@ -291,6 +294,39 @@ public partial class MainWindow : Window
             }
         }
         catch (Exception ex) { StatusText.Text = $"파일을 열지 못했습니다: {ex.Message}"; }
+    }
+
+    private void OpenFolder(FileRow row)
+    {
+        if (!TryResolveBackupPath(row, out var path)) return;
+        try
+        {
+            var folder = Path.GetDirectoryName(path);
+            if (string.IsNullOrWhiteSpace(folder)) throw new DirectoryNotFoundException("파일 폴더를 찾을 수 없습니다.");
+            Directory.CreateDirectory(folder);
+            if (File.Exists(path))
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+            else
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
+            StatusText.Text = File.Exists(path) ? $"파일 위치를 열었습니다: {row.OriginalFileName}" : $"파일 폴더를 열었습니다: {folder}";
+        }
+        catch (Exception ex) { StatusText.Text = $"폴더를 열지 못했습니다: {ex.Message}"; }
+    }
+
+    private bool TryResolveBackupPath(FileRow row, out string path)
+    {
+        try
+        {
+            path = Path.Combine(App.Services.Backups.Root, "members", row.MemberId, "devices", row.DeviceId,
+                BackupService.NormalizeRelativePath(row.RelativePath));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            path = string.Empty;
+            StatusText.Text = $"파일 경로를 열 수 없습니다: {ex.Message}";
+            return false;
+        }
     }
 
     private sealed record FileRow(string DeviceId, string MemberId, string RelativePath, string MemberName,
