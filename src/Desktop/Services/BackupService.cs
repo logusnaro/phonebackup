@@ -15,6 +15,19 @@ public sealed class BackupService
     public BackupService(DatabaseService database) => _database = database;
     public string Root { get => _root; set { _root = value; Directory.CreateDirectory(value); } }
 
+    public async Task LoadConfiguredRootAsync()
+    {
+        var configured = await _database.QueryAsync("SELECT value FROM app_settings WHERE key='backup_root' LIMIT 1", r => r.GetString(0));
+        if (configured.Count > 0 && !string.IsNullOrWhiteSpace(configured[0])) Root = configured[0];
+    }
+
+    public async Task SetRootAsync(string root)
+    {
+        Root = root;
+        await _database.ExecuteAsync("INSERT INTO app_settings(key,value) VALUES('backup_root',$value) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            p => p.AddWithValue("$value", root));
+    }
+
     public async Task<Guid> StartSyncAsync(Guid deviceId)
     {
         var id = Guid.NewGuid();
@@ -95,7 +108,9 @@ public sealed class BackupService
             p => p.AddWithValue("$id", deviceId.ToString()));
         var memberFolder = memberId.Count == 0 ? deviceId.ToString() : memberId[0];
         var safeRelative = NormalizeRelativePath(item.RelativePath);
-        var presentation = Path.Combine(_root, "members", memberFolder, "devices", deviceId.ToString(), safeRelative);
+        // Keep the original file name and relative folders, but isolate every
+        // content version so a changed file can never shadow an older backup.
+        var presentation = Path.Combine(_root, "members", memberFolder, "devices", deviceId.ToString(), "versions", item.Sha256, safeRelative);
         Directory.CreateDirectory(Path.GetDirectoryName(presentation)!);
         if (!File.Exists(presentation)) File.Copy(objectPath, presentation);
         var objectId = Guid.NewGuid();

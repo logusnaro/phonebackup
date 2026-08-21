@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import android.util.Log
 import java.io.IOException
 import java.net.SocketException
 import java.net.UnknownHostException
@@ -31,6 +32,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         val tree = applicationContext.getSharedPreferences("sync", Context.MODE_PRIVATE).getString("treeUri", null)
         val client = NetworkClient(applicationContext, store); val repository = FileRepository(applicationContext)
         val state = applicationContext.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE)
+        val backupRequestId = inputData.getString("backupRequestId")
         val runKey = "run_${config.deviceId}"; val cursorKey = "cursor_${config.deviceId}"; val processedKey = "processed_${config.deviceId}"; val storedKey = "stored_${config.deviceId}"
         var runId = state.getString(runKey, null) ?: ""
         var processed = state.getInt(processedKey, 0); var stored = state.getInt(storedKey, 0)
@@ -72,7 +74,9 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                     setProgress(workDataOf("stage" to "업로드 중", "processed" to processed, "total" to files.size, "currentFile" to relative))
                 } finally { temp.delete() }
             }
-            val finished = firstIndex >= files.size || (lastProcessedPath.isNotBlank() && files.drop(firstIndex).lastOrNull()?.second == lastProcessedPath)
+            // Do not create a second tail list for large phones just to decide
+            // whether the cursor reached the final file.
+            val finished = firstIndex >= files.size || (lastProcessedPath.isNotBlank() && files.lastOrNull()?.second == lastProcessedPath)
             if (finished) {
                 client.finish(config, runId, processed, stored)
                 if (androidx.core.content.ContextCompat.checkSelfPermission(applicationContext, android.Manifest.permission.READ_CONTACTS) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -80,6 +84,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                     client.downloadContacts(config).forEach { ContactsRepository(applicationContext).upsertManaged(it) }
                 }
                 state.edit().remove(runKey).remove(cursorKey).remove(processedKey).remove(storedKey).apply()
+                if (!backupRequestId.isNullOrBlank()) runCatching { client.reportBackupRequestResult(config, backupRequestId, true) }
                 Result.success(workDataOf("processed" to processed, "total" to files.size, "stored" to stored))
             } else {
                 client.progress(config, runId, processed, files.size, lastProcessedPath, "다음 분할 백업 대기")
@@ -88,7 +93,13 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         } catch (e: Exception) {
             val transient = e is IOException || e is SocketException || e is UnknownHostException || e is SSLException
             if (runId.isNotEmpty() && !transient) runCatching { client.finish(config, runId, processed, stored, e.message ?: e::class.simpleName) }
-            if (transient) Result.retry() else {
+            if (transient && runAttemptCount < 8) {
+                Log.w("PhoneBackup", "transient backup failure; retry ${runAttemptCount + 1}", e)
+                Result.retry()
+            } else {
+                Log.e("PhoneBackup", "backup failed", e)
+                if (runId.isNotEmpty() && transient) runCatching { client.finish(config, runId, processed, stored, e.message ?: e::class.simpleName) }
+                if (!backupRequestId.isNullOrBlank()) runCatching { client.reportBackupRequestResult(config, backupRequestId, false, e.message ?: e::class.simpleName) }
                 state.edit().remove(runKey).remove(cursorKey).remove(processedKey).remove(storedKey).apply()
                 Result.failure(workDataOf("error" to (e.message ?: e::class.simpleName ?: "알 수 없는 오류"), "processed" to processed, "stored" to stored))
             }

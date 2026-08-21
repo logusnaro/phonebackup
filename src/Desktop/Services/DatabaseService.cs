@@ -100,6 +100,8 @@ public sealed class DatabaseService : IDisposable
                 CREATE TABLE IF NOT EXISTS audit_log(
                   id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL,
                   subject_id TEXT, details_json TEXT, created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS app_settings(
+                  key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 """;
             await command.ExecuteNonQueryAsync();
             await using var categoryFix = connection.CreateCommand();

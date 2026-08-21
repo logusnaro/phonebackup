@@ -30,14 +30,17 @@ public sealed class AppServices : IDisposable
     public async Task StartAsync()
     {
         await Database.InitializeAsync();
+        await Backups.LoadConfiguredRootAsync();
         await Server.StartAsync();
         PairingDiscovery.Start();
+        Schedules.Start();
     }
 
     public void Dispose()
     {
         Server.Dispose();
         PairingDiscovery.Dispose();
+        Schedules.Dispose();
         Database.Dispose();
     }
 }

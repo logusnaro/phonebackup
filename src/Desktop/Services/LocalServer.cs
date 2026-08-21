@@ -66,6 +66,21 @@ public sealed class LocalServer : IDisposable
                 });
             return Results.Ok(rows.Select(id => new { requestId = id }));
         });
+        _app.MapPost("/api/v1/backup/requests/{requestId}/result", async (HttpContext context) =>
+        {
+            var deviceId = await AuthenticateAsync(context); if (deviceId is null) return Results.Unauthorized();
+            var requestId = context.Request.RouteValues["requestId"]?.ToString();
+            if (!Guid.TryParse(requestId, out _)) return Results.BadRequest();
+            var payload = await context.Request.ReadFromJsonAsync<BackupRequestResultPayload>();
+            if (payload is null || !string.Equals(payload.RequestId, requestId, StringComparison.OrdinalIgnoreCase)) return Results.BadRequest();
+            var status = string.Equals(payload.Status, "Completed", StringComparison.OrdinalIgnoreCase) ? 2 : 3;
+            await _database.ExecuteAsync("UPDATE backup_requests SET status=$status,completed_at=$at,error=$error WHERE id=$id AND device_id=$device AND status=1", p =>
+            {
+                p.AddWithValue("$status", status); p.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O")); p.AddWithValue("$error", (object?)payload.Error ?? DBNull.Value);
+                p.AddWithValue("$id", requestId); p.AddWithValue("$device", deviceId.Value.ToString());
+            });
+            return Results.Ok();
+        });
         _app.MapPost("/api/v1/pair/claim", async (HttpContext context) =>
         {
             try
@@ -97,6 +112,7 @@ public sealed class LocalServer : IDisposable
             var name = DecodeUtf8Header(context, "X-Original-File-Name-B64", "X-Original-File-Name");
             var category = context.Request.Headers["X-Category"].ToString();
             if (string.IsNullOrWhiteSpace(relative) || string.IsNullOrWhiteSpace(sha)) return Results.BadRequest(new { error = "manifest_headers_missing" });
+            if (sha.Length != 64 || sha.Any(c => !Uri.IsHexDigit(c))) return Results.BadRequest(new { error = "sha256_invalid" });
             var temp = Path.Combine(Path.GetTempPath(), $"phonebackup-{Guid.NewGuid():N}.partial");
             try
             {
@@ -303,4 +319,5 @@ public sealed class LocalServer : IDisposable
 
     private sealed record FinishPayload(Guid SyncRunId, SyncRunStatus Status, int FilesSeen, int FilesStored, string? Error);
     private sealed record ProgressPayload(Guid SyncRunId, int FilesProcessed, int FilesTotal, string? CurrentFile, string Stage);
+    private sealed record BackupRequestResultPayload(string RequestId, string Status, string? Error);
 }

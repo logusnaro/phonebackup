@@ -24,19 +24,27 @@ public partial class MainWindow : Window
         MembersGrid.ItemsSource = _members;
         Loaded += async (_, _) =>
         {
-            ServerText.Text = $"수신 대기: {App.Services.Server.ServerUrl}";
-            await RefreshMembersAsync();
-            await RefreshScheduleDevicesAsync();
-            await RefreshContactsAsync();
-            var backfilled = await App.Services.Backups.BackfillRecordingMetadataAsync();
-            if (backfilled > 0) StatusText.Text = $"기존 통화 녹음 {backfilled}개 파일명을 색인했습니다.";
-            await RefreshFilesAsync();
-            await RefreshGeneralFilesAsync();
-            await RefreshDeletionCountAsync();
-            await LoadScheduleForSelectedDeviceAsync();
-            await RefreshLiveStatusAsync();
-            _statusTimer.Tick += async (_, _) => await RefreshLiveStatusAsync();
-            _statusTimer.Start();
+            try
+            {
+                ServerText.Text = $"수신 대기: {App.Services.Server.ServerUrl}";
+                await RefreshMembersAsync();
+                await RefreshScheduleDevicesAsync();
+                await RefreshContactsAsync();
+                var backfilled = await App.Services.Backups.BackfillRecordingMetadataAsync();
+                if (backfilled > 0) StatusText.Text = $"기존 통화 녹음 {backfilled}개 파일명을 색인했습니다.";
+                await RefreshFilesAsync();
+                await RefreshGeneralFilesAsync();
+                await RefreshDeletionCountAsync();
+                await LoadScheduleForSelectedDeviceAsync();
+                await RefreshLiveStatusAsync();
+                _statusTimer.Tick += async (_, _) => await RefreshLiveStatusAsync();
+                _statusTimer.Start();
+            }
+            catch (Exception ex)
+            {
+                App.LogCrash("MainWindow.Loaded", ex);
+                StatusText.Text = $"화면 초기화 실패: {ex.Message} · 로그: %TEMP%\\PhoneBackup-crash.log";
+            }
         };
         Closed += (_, _) => _statusTimer.Stop();
     }
@@ -462,8 +470,10 @@ public partial class MainWindow : Window
     {
         try
         {
-            path = Path.Combine(App.Services.Backups.Root, "members", row.MemberId, "devices", row.DeviceId,
-                BackupService.NormalizeRelativePath(row.RelativePath));
+            var relative = BackupService.NormalizeRelativePath(row.RelativePath);
+            var legacy = Path.Combine(App.Services.Backups.Root, "members", row.MemberId, "devices", row.DeviceId, relative);
+            var versioned = Path.Combine(App.Services.Backups.Root, "members", row.MemberId, "devices", row.DeviceId, "versions", row.Sha256, relative);
+            path = File.Exists(versioned) || !File.Exists(legacy) ? versioned : legacy;
             return true;
         }
         catch (Exception ex)
@@ -482,10 +492,22 @@ public partial class MainWindow : Window
         var count = await App.Services.Database.QueryAsync("SELECT COUNT(*) FROM deletion_candidates WHERE approved_at IS NULL AND eligible_at <= $now", r => r.GetInt32(0), p => p.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O")));
         DeletionCountText.Text = count.FirstOrDefault().ToString();
     }
-    private void ChooseRoot_Click(object sender, RoutedEventArgs e)
+    private async void ChooseRoot_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFolderDialog { Title = "백업 저장 폴더 선택" };
-        if (dialog.ShowDialog() == true) { App.Services.Backups.Root = dialog.FolderName; StatusText.Text = $"백업 폴더: {dialog.FolderName}"; }
+        if (dialog.ShowDialog() == true)
+        {
+            try
+            {
+                await App.Services.Backups.SetRootAsync(dialog.FolderName);
+                StatusText.Text = $"백업 폴더를 저장했습니다: {dialog.FolderName}";
+            }
+            catch (Exception ex)
+            {
+                App.LogCrash("ChooseRoot", ex);
+                StatusText.Text = $"백업 폴더 저장 실패: {ex.Message}";
+            }
+        }
     }
 
     private static string? Prompt(string message, string title)

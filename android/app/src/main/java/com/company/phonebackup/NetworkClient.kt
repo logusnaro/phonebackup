@@ -34,6 +34,7 @@ import java.security.cert.CertificateException
 @Serializable data class DeletionResultDto(val id: String, val relativePath: String, val deleted: Boolean, val reason: String? = null)
 @Serializable data class DeletionRequestDto(val requestId: String, val items: List<DeletionItemDto>)
 @Serializable data class BackupRequestDto(val requestId: String)
+@Serializable data class BackupRequestResultPayload(val requestId: String, val status: String, val error: String? = null)
 
 class NetworkClient(private val context: Context, private val store: PairingStore) {
     private val json = Json { ignoreUnknownKeys = true }
@@ -94,6 +95,13 @@ class NetworkClient(private val context: Context, private val store: PairingStor
     fun fetchBackupRequests(config: PairingConfig): List<BackupRequestDto> {
         val response = authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/backup/requests").headers(headers(config)).get().build()).execute()
         response.use { if (!it.isSuccessful) error("PC 백업 요청 조회 실패: ${it.code}"); return json.decodeFromString(it.body!!.string()) }
+    }
+    fun reportBackupRequestResult(config: PairingConfig, requestId: String, success: Boolean, error: String? = null) {
+        val payload = BackupRequestResultPayload(requestId, if (success) "Completed" else "Failed", error)
+        val body = json.encodeToString(BackupRequestResultPayload.serializer(), payload).toRequestBody("application/json".toMediaType())
+        authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/backup/requests/$requestId/result").headers(headers(config)).post(body).build()).execute().use {
+            if (!it.isSuccessful) error("백업 요청 상태 저장 실패: ${it.code}")
+        }
     }
     fun progress(config: PairingConfig, runId: String, processed: Int, total: Int, currentFile: String?, stage: String) {
         val payload = ProgressPayload(runId, processed, total, currentFile, stage)

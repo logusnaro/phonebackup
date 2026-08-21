@@ -5,7 +5,9 @@ import android.content.Context
 import android.provider.ContactsContract
 import kotlinx.serialization.Serializable
 import java.nio.charset.StandardCharsets
-import java.time.Instant
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 
 @Serializable data class ContactDto(val id: String, val displayName: String, val phoneNumbers: List<String> = emptyList(), val emails: List<String> = emptyList(), val company: String? = null, val notes: String? = null, val updatedAt: String = "")
@@ -30,7 +32,10 @@ class ContactsRepository(private val context: Context) {
             arrayOf(ContactsContract.CommonDataKinds.Email.CONTACT_ID, ContactsContract.CommonDataKinds.Email.ADDRESS), null, null, null)?.use { cursor ->
             while (cursor.moveToNext()) emailsByContact.getOrPut(cursor.getString(0)) { mutableListOf() }.add(cursor.getString(1))
         }
-        val updatedAt = Instant.now().toString()
+        // java.time is not available on the Galaxy S7's original API 23/24
+        // builds unless core-library desugaring is enabled. Keep the APK
+        // compatible with the declared minSdk without requiring that runtime.
+        val updatedAt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US).format(Date())
         return basics.map {
             val stableId = UUID.nameUUIDFromBytes("android-contact:${it.id}".toByteArray(StandardCharsets.UTF_8)).toString()
             ContactDto(stableId, it.name, phonesByContact[it.id].orEmpty().distinct(), emailsByContact[it.id].orEmpty().distinct(), updatedAt = updatedAt)

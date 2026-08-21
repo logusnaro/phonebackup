@@ -24,7 +24,10 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.Constraints
 import androidx.work.NetworkType
 import androidx.work.BackoffPolicy
+import androidx.work.workDataOf
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -41,7 +44,18 @@ class MainActivity : ComponentActivity() {
     private val deletionRunning = mutableStateOf(false)
     private val remoteDeletionRunning = AtomicBoolean(false)
     private var treeUri: Uri? = null
-    private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> uri?.let { treeUri = it; contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION); getSharedPreferences("sync", MODE_PRIVATE).edit().putString("treeUri", it.toString()).apply() } }
+    private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri ?: return@registerForActivityResult
+        try {
+            treeUri = uri
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            getSharedPreferences("sync", MODE_PRIVATE).edit().putString("treeUri", uri.toString()).apply()
+            status.value = "백업 폴더를 저장했습니다."
+        } catch (e: SecurityException) {
+            Log.e("PhoneBackup", "folder permission failed", e)
+            status.value = "선택한 폴더 권한을 저장하지 못했습니다. 다른 폴더를 선택해 주세요."
+        }
+    }
     private val usbPairingFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@registerForActivityResult
         status.value = "USB 등록 파일을 읽는 중…"
@@ -66,6 +80,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = PairingStore(this)
+        treeUri = getSharedPreferences("sync", MODE_PRIVATE).getString("treeUri", null)?.let(Uri::parse)
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                openFileOutput("phonebackup-crash.log", MODE_APPEND).bufferedWriter().use {
+                    it.appendLine("${System.currentTimeMillis()} [${thread.name}] ${throwable.stackTraceToString()}")
+                }
+            } catch (_: Exception) { }
+            previousHandler?.uncaughtException(thread, throwable)
+        }
         val migrations = getSharedPreferences("migrations", MODE_PRIVATE)
         if (!migrations.getBoolean("cancelLegacySlowFolderWorkV2", false)) {
             WorkManager.getInstance(this).cancelAllWork()
@@ -81,14 +105,21 @@ class MainActivity : ComponentActivity() {
         observeBackup()
         requestStorageAccess(false)
     }
-    private fun startBackup() {
-        val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-        val request = OneTimeWorkRequestBuilder<SyncWorker>()
+    private fun startBackup(backupRequestId: String? = null) {
+        val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build()
+        val requestBuilder = OneTimeWorkRequestBuilder<SyncWorker>()
             .setConstraints(constraints)
             .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS)
-            .build()
-        backupRunning.value = true; backupStage.value = "백업 시작 대기"; backupProcessed.intValue = 0; backupTotal.intValue = 0
-        WorkManager.getInstance(this).enqueueUniqueWork("manual-backup", ExistingWorkPolicy.KEEP, request)
+        if (!backupRequestId.isNullOrBlank()) requestBuilder.setInputData(workDataOf("backupRequestId" to backupRequestId))
+        val request = requestBuilder.build()
+        try {
+            backupRunning.value = true; backupStage.value = "백업 시작 대기"; backupProcessed.intValue = 0; backupTotal.intValue = 0
+            WorkManager.getInstance(this).enqueueUniqueWork("manual-backup", ExistingWorkPolicy.KEEP, request)
+        } catch (e: Exception) {
+            Log.e("PhoneBackup", "backup enqueue failed", e)
+            backupRunning.value = false
+            backupStage.value = "백업 시작 실패: ${e.message ?: e::class.simpleName}"
+        }
     }
     private fun observeBackup() {
         WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData("manual-backup").observe(this) { infos ->
@@ -114,6 +145,8 @@ class MainActivity : ComponentActivity() {
         } else if (showPickerFallback) {
             status.value = "Android 10 이상에서는 접근할 폴더를 한 번 선택해 주세요."
             folderPicker.launch(null)
+        } else {
+            status.value = "Android 10 이상에서는 백업 폴더를 직접 선택해야 합니다."
         }
     }
     private fun useDefaultFolders() {
@@ -121,7 +154,7 @@ class MainActivity : ComponentActivity() {
         getSharedPreferences("sync", MODE_PRIVATE).edit().remove("treeUri").apply()
         store.load()?.deviceId?.let { FileRepository(this).clearSavedProfile(it) }
         status.value = "다음 백업에서 이 기기의 저장 폴더를 다시 자동 검색합니다."
-        requestStorageAccess(false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) folderPicker.launch(null) else requestStorageAccess(false)
     }
     @Composable private fun PhoneBackupScreen() {
         var pairingCode by remember { mutableStateOf("") }
@@ -133,26 +166,30 @@ class MainActivity : ComponentActivity() {
                     "● PC 사용 가능 · 백업 진행 중"
                 } else if (config == null) {
                     "● PC 미등록"
-                } else try {
-                    val client = NetworkClient(this@MainActivity, store)
-                    client.ping(config)
-                    if (!backupRunning.value && !deletionRunning.value) {
-                        val requests = runCatching { client.fetchBackupRequests(config) }.getOrDefault(emptyList())
-                        if (requests.isNotEmpty()) {
-                            runOnUiThread {
-                                if (!backupRunning.value && !deletionRunning.value) {
-                                    startBackup()
-                                    status.value = "PC 요청으로 백업을 시작했습니다."
+                } else {
+                    val connected = withContext(Dispatchers.IO) {
+                        runCatching {
+                            val client = NetworkClient(this@MainActivity, store)
+                            client.ping(config)
+                            if (!backupRunning.value && !deletionRunning.value) {
+                                val requests = client.fetchBackupRequests(config)
+                                if (requests.isNotEmpty()) runOnUiThread {
+                                    if (!backupRunning.value && !deletionRunning.value) {
+                                        startBackup(requests.first().requestId)
+                                        status.value = "PC 요청으로 백업을 시작했습니다."
+                                    }
                                 }
                             }
+                            true
+                        }.getOrElse {
+                            Log.w("PhoneBackup", "PC polling failed", it)
+                            false
                         }
                     }
-                    if (!backupRunning.value && !deletionRunning.value && remoteDeletionRunning.compareAndSet(false, true)) {
+                    if (connected && !backupRunning.value && !deletionRunning.value && remoteDeletionRunning.compareAndSet(false, true)) {
                         Thread { processRemoteDeletionRequests(config) }.start()
                     }
-                    "● PC 사용 가능"
-                } catch (e: Exception) {
-                    "● PC 등록됨 · 백업 시 Wi‑Fi로 자동 연결"
+                    if (connected) "● PC 사용 가능" else "● PC 등록됨 · 백업 시 Wi‑Fi로 자동 연결"
                 }
                 delay(5000)
             }
