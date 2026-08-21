@@ -113,10 +113,34 @@ public sealed class LocalServer : IDisposable
             var category = context.Request.Headers["X-Category"].ToString();
             if (string.IsNullOrWhiteSpace(relative) || string.IsNullOrWhiteSpace(sha)) return Results.BadRequest(new { error = "manifest_headers_missing" });
             if (sha.Length != 64 || sha.Any(c => !Uri.IsHexDigit(c))) return Results.BadRequest(new { error = "sha256_invalid" });
-            var temp = Path.Combine(Path.GetTempPath(), $"phonebackup-{Guid.NewGuid():N}.partial");
+            var offsetHeader = context.Request.Headers["X-Chunk-Offset"].ToString();
+            var totalHeader = context.Request.Headers["X-Chunk-Total"].ToString();
+            long chunkOffset = 0, chunkTotal = 0;
+            var chunked = long.TryParse(offsetHeader, out chunkOffset) && long.TryParse(totalHeader, out chunkTotal) && chunkOffset >= 0 && chunkTotal >= 0;
+            var tempKey = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{runId:N}|{relative}"))).ToLowerInvariant();
+            var temp = Path.Combine(Path.GetTempPath(), $"phonebackup-{tempKey}.partial");
+            // Preserve an incomplete chunk file when the connection drops while
+            // copying the request body. It is deleted once a complete file is
+            // available (or if validation fails).
+            var keepPartial = chunked;
             try
             {
-                await using (var output = File.Create(temp)) await context.Request.Body.CopyToAsync(output);
+                if (chunked)
+                {
+                    var current = File.Exists(temp) ? new FileInfo(temp).Length : 0L;
+                    if (current != chunkOffset) { keepPartial = true; return Results.Conflict(new { nextOffset = current }); }
+                    await using var output = new FileStream(temp, FileMode.Append, FileAccess.Write, FileShare.Read);
+                    await context.Request.Body.CopyToAsync(output);
+                    var received = new FileInfo(temp).Length;
+                    if (received < chunkTotal) { keepPartial = true; return Results.Ok(new { complete = false, nextOffset = received }); }
+                    if (received > chunkTotal) { keepPartial = false; return Results.BadRequest(new { error = "chunk_total_mismatch" }); }
+                    keepPartial = false;
+                }
+                else
+                {
+                    await using var output = File.Create(temp);
+                    await context.Request.Body.CopyToAsync(output);
+                }
                 var actual = await BackupService.ComputeSha256Async(temp);
                 if (!actual.Equals(sha, StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new { error = "hash_mismatch" });
                 await using var input = File.OpenRead(temp);
@@ -127,7 +151,7 @@ public sealed class LocalServer : IDisposable
                 var result = await _backups.StoreAsync(deviceId.Value, runId, item, input);
                 return Results.Ok(new { result.Sha256, result.PresentationPath });
             }
-            finally { if (File.Exists(temp)) File.Delete(temp); }
+            finally { if (!keepPartial && File.Exists(temp)) File.Delete(temp); }
         });
         _app.MapGet("/api/v1/sync/known", async (HttpContext context) =>
         {

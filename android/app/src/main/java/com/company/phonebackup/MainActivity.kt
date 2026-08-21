@@ -103,6 +103,10 @@ class MainActivity : ComponentActivity() {
         }
         setContent { PhoneBackupScreen() }
         observeBackup()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1002)
+        }
         requestStorageAccess(false)
     }
     private fun startBackup(backupRequestId: String? = null) {

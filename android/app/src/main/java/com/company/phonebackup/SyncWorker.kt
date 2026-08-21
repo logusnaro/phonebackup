@@ -3,8 +3,14 @@ package com.company.phonebackup
 import android.content.Context
 import android.net.Uri
 import androidx.work.CoroutineWorker
+import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
 import android.util.Log
 import java.io.IOException
 import java.net.SocketException
@@ -27,7 +33,32 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         if (ext in setOf("m4a", "amr", "3gp", "wav", "mp3", "aac", "ogg", "flac")) return "audio"
         return "other"
     }
+
+    private fun foregroundInfo(stage: String): ForegroundInfo {
+        val channelId = "backup_progress"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = applicationContext.getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(NotificationChannel(channelId, "백업 진행", NotificationManager.IMPORTANCE_LOW).apply {
+                description = "업무폰 백업이 실행 중일 때 표시합니다."
+            })
+        }
+        val notification = NotificationCompat.Builder(applicationContext, channelId)
+            .setSmallIcon(R.drawable.ic_phonebackup)
+            .setContentTitle("업무폰 백업")
+            .setContentText(stage)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setProgress(0, 0, true)
+            .build()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(42, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else ForegroundInfo(42, notification)
+    }
+
     override suspend fun doWork(): Result {
+        // WorkManager persists this worker across activity/process death. Promoting it
+        // to a foreground worker prevents Android from reclaiming it during long uploads.
+        setForeground(foregroundInfo("백업 준비 중"))
         val store = PairingStore(applicationContext); val config = store.load() ?: return Result.failure(workDataOf("error" to "PC에 먼저 연결해 주세요."))
         val tree = applicationContext.getSharedPreferences("sync", Context.MODE_PRIVATE).getString("treeUri", null)
         val client = NetworkClient(applicationContext, store); val repository = FileRepository(applicationContext)

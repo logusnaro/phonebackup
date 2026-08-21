@@ -23,6 +23,7 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import java.security.cert.X509Certificate
+import java.io.RandomAccessFile
 import java.security.cert.CertificateException
 
 @Serializable data class PairRequest(val ticketId: String, val deviceName: String, val model: String, val androidVersion: String, val devicePublicKey: String = "")
@@ -121,9 +122,34 @@ class NetworkClient(private val context: Context, private val store: PairingStor
     fun upload(config: PairingConfig, runId: String, file: File, relativePath: String, category: String, sha256: String) {
         val relativeB64 = Base64.encodeToString(relativePath.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
         val nameB64 = Base64.encodeToString(relativePath.substringAfterLast('/').toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-        val requestHeaders = headers(config).newBuilder().add("X-Relative-Path-B64", relativeB64).add("X-SHA256", sha256).add("X-Original-File-Name-B64", nameB64).add("X-Category", category).build()
-        val request = Request.Builder().url("${config.serverUrl}/api/v1/sync/file?syncRunId=$runId").headers(requestHeaders).put(file.asRequestBody("application/octet-stream".toMediaType())).build()
-        authenticated(config).newCall(request).execute().use { if (!it.isSuccessful) error("파일 업로드 실패 $relativePath: HTTP ${it.code}") }
+        val chunkSize = 8 * 1024 * 1024L
+        var offset = 0L
+        RandomAccessFile(file, "r").use { input ->
+            while (offset < file.length() || (file.length() == 0L && offset == 0L)) {
+                val remaining = file.length() - offset
+                val length = if (file.length() == 0L) 0 else minOf(chunkSize, remaining).toInt()
+                val bytes = ByteArray(length)
+                input.seek(offset)
+                if (length > 0) input.readFully(bytes)
+                val requestHeaders = headers(config).newBuilder()
+                    .add("X-Relative-Path-B64", relativeB64).add("X-SHA256", sha256)
+                    .add("X-Original-File-Name-B64", nameB64).add("X-Category", category)
+                    .add("X-Chunk-Offset", offset.toString()).add("X-Chunk-Total", file.length().toString()).build()
+                val request = Request.Builder().url("${config.serverUrl}/api/v1/sync/file?syncRunId=$runId")
+                    .headers(requestHeaders).put(bytes.toRequestBody("application/octet-stream".toMediaType())).build()
+                var resumeOffset: Long? = null
+                authenticated(config).newCall(request).execute().use { response ->
+                    if (response.code == 409) {
+                        val next = runCatching { Json.decodeFromString<Map<String, Long>>(response.body?.string().orEmpty())["nextOffset"] }.getOrNull()
+                        if (next != null && next >= 0 && next <= file.length()) resumeOffset = next
+                    }
+                    if (!response.isSuccessful && resumeOffset == null) error("파일 업로드 실패 $relativePath: HTTP ${response.code}")
+                }
+                if (resumeOffset != null) { offset = resumeOffset!!; continue }
+                offset += length
+                if (file.length() == 0L) break
+            }
+        }
     }
     fun proposeContacts(config: PairingConfig, contacts: List<ContactDto>) {
         @Serializable data class Snapshot(val deviceId: String, val contacts: List<ContactDto>)
