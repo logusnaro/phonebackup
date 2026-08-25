@@ -73,13 +73,13 @@ class MainActivity : ComponentActivity() {
             }
         }.start()
     }
-    private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
     private val storagePermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         status.value = if (result.values.all { it }) "표준 폴더 자동 검색을 사용할 수 있습니다." else "저장공간 권한이 없어 직접 폴더 선택이 필요합니다."
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = PairingStore(this)
+        ReminderWorker.schedule(this)
         treeUri = getSharedPreferences("sync", MODE_PRIVATE).getString("treeUri", null)?.let(Uri::parse)
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -124,6 +124,32 @@ class MainActivity : ComponentActivity() {
             backupRunning.value = false
             backupStage.value = "백업 시작 실패: ${e.message ?: e::class.simpleName}"
         }
+    }
+    private fun requestSmartSwitchBackup() {
+        val config = store.load()
+        if (config == null) {
+            status.value = "PC 등록이 필요합니다. USB 등록하기 또는 PC 찾기를 먼저 실행하세요."
+            android.app.AlertDialog.Builder(this)
+                .setTitle("PC 연결 필요")
+                .setMessage("먼저 PC 앱에서 기기 연결을 선택하고, USB 등록하기 또는 6자리 코드로 PC를 등록하세요.")
+                .setPositiveButton("확인", null)
+                .show()
+            return
+        }
+        status.value = "PC에 Smart Switch 실행을 요청하는 중…"
+        Thread {
+            try {
+                val response = NetworkClient(this@MainActivity, store).requestSmartSwitchBackup(config)
+                runOnUiThread {
+                    status.value = if (response.launched)
+                        "PC에서 Smart Switch를 열었습니다. USB를 연결하고 백업 시작을 확인하세요."
+                    else "PC에서 Smart Switch를 열지 못했습니다. PC 앱에서 ‘Smart Switch 열기’를 눌러 주세요."
+                }
+            } catch (e: Exception) {
+                Log.e("PhoneBackup", "Smart Switch request failed", e)
+                runOnUiThread { status.value = "Smart Switch 요청 실패: ${e::class.simpleName}: ${e.message}" }
+            }
+        }.start()
     }
     private fun observeBackup() {
         WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData("manual-backup").observe(this) { infos ->
@@ -220,7 +246,7 @@ class MainActivity : ComponentActivity() {
             OutlinedButton(onClick = { usbPairingFile.launch(arrayOf("application/json", "text/plain", "*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("USB 등록하기") }
             OutlinedButton(onClick = { useDefaultFolders() }, modifier = Modifier.fillMaxWidth()) { Text("표준 폴더 자동 검색") }
             TextButton(onClick = { folderPicker.launch(null) }, modifier = Modifier.fillMaxWidth()) { Text("직접 폴더 선택(필요한 경우)") }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = { permissions.launch(arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS)) }) { Text("주소록 권한") }; Button(onClick = { startBackup() }, enabled = !backupRunning.value && !deletionRunning.value) { Text(if (backupRunning.value) "백업 중…" else "지금 백업") }; OutlinedButton(onClick = { showDeletionConfirm = true }, enabled = !deletionRunning.value && !backupRunning.value) { Text(if (deletionRunning.value) "삭제 확인 중…" else "90일 이전 삭제") } }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { requestSmartSwitchBackup() }, enabled = !backupRunning.value && !deletionRunning.value) { Text("Smart Switch 백업 요청") }; OutlinedButton(onClick = { showDeletionConfirm = true }, enabled = !deletionRunning.value && !backupRunning.value) { Text(if (deletionRunning.value) "삭제 확인 중…" else "90일 삭제 검토") } }
             if (backupRunning.value || backupStage.value.isNotBlank()) {
                 val total = backupTotal.intValue
                 if (total > 0) LinearProgressIndicator(progress = { backupProcessed.intValue.toFloat() / total }, modifier = Modifier.fillMaxWidth())
@@ -229,11 +255,11 @@ class MainActivity : ComponentActivity() {
                 if (backupCurrentFile.value.isNotBlank()) Text("현재 파일: ${backupCurrentFile.value}", style = MaterialTheme.typography.bodySmall, maxLines = 2)
             }
             if (deletionStatus.value.isNotBlank()) Text(deletionStatus.value, style = MaterialTheme.typography.bodySmall)
-            Text(status.value, color = MaterialTheme.colorScheme.primary); Text("예약은 PC 앱에서 활성화한 뒤 Android가 Wi‑Fi에서 실행합니다.", style = MaterialTheme.typography.bodySmall)
+            Text(status.value, color = MaterialTheme.colorScheme.primary); Text("Smart Switch 백업은 PC에서 실행합니다. 이 앱은 주 1회 백업·삭제 검토 알림을 표시합니다. 휴대폰 주소록은 동기화하지 않습니다.", style = MaterialTheme.typography.bodySmall)
             if (showDeletionConfirm) AlertDialog(
                 onDismissRequest = { showDeletionConfirm = false },
                 title = { Text("90일 이전 파일 삭제") },
-                text = { Text("PC에 해시 검증이 완료된 90일 이전 파일을 휴대폰에서 삭제합니다. 원본 경로와 해시가 다르면 자동으로 건너뜁니다. 계속할까요?") },
+                text = { Text("Smart Switch 검증이 완료되고 PB에 등록된 통화녹음 중 90일이 지난 파일만 검토합니다. 백업 검증 기록이 없으면 삭제 후보가 나오지 않습니다. 원본 경로와 해시가 다르면 자동으로 건너뜁니다. 계속할까요?") },
                 confirmButton = { TextButton(onClick = { showDeletionConfirm = false; startDeletion() }) { Text("삭제 실행") } },
                 dismissButton = { TextButton(onClick = { showDeletionConfirm = false }) { Text("취소") } }
             )

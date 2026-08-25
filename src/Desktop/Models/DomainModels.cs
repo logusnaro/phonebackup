@@ -15,7 +15,7 @@ public sealed record BackupManifestItem(string RelativePath, string OriginalFile
 public sealed record SyncRun(Guid Id, Guid DeviceId, SyncRunStatus Status, DateTimeOffset StartedAt,
     DateTimeOffset? FinishedAt, int FilesSeen, int FilesStored, string? Error);
 public sealed record Contact(Guid Id, string DisplayName, IReadOnlyList<string> PhoneNumbers,
-    IReadOnlyList<string> Emails, string? Company, string? Notes, DateTimeOffset UpdatedAt);
+    IReadOnlyList<string> Emails, string? Company, string? Notes, DateTimeOffset UpdatedAt, Guid? MemberId = null);
 public sealed record ContactConflict(Guid Id, Guid? ContactAId, Guid? ContactBId, string Reason,
     ContactProposalStatus Status, DateTimeOffset CreatedAt);
 public sealed record PairingTicket(string TicketId, string DeviceToken, string ServerUrl,

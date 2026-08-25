@@ -18,7 +18,7 @@ public sealed class LocalServer : IDisposable
 {
     private readonly DatabaseService _database;
     private readonly BackupService _backups;
-    private readonly ContactService _contacts;
+    private readonly SmartSwitchService _smartSwitch;
     private readonly PairingService _pairing;
     private readonly string _certificatePath;
     private WebApplication? _app;
@@ -26,8 +26,8 @@ public sealed class LocalServer : IDisposable
     public int Port { get; private set; }
     public string ServerUrl { get; private set; } = "https://127.0.0.1:42817";
 
-    public LocalServer(DatabaseService database, BackupService backups, ContactService contacts, PairingService pairing, string dataRoot)
-    { _database = database; _backups = backups; _contacts = contacts; _pairing = pairing; _certificatePath = Path.Combine(dataRoot, "server-certificate.pfx"); }
+    public LocalServer(DatabaseService database, BackupService backups, SmartSwitchService smartSwitch, PairingService pairing, string dataRoot)
+    { _database = database; _backups = backups; _smartSwitch = smartSwitch; _pairing = pairing; _certificatePath = Path.Combine(dataRoot, "server-certificate.pfx"); }
 
     public async Task StartAsync()
     {
@@ -80,6 +80,25 @@ public sealed class LocalServer : IDisposable
                 p.AddWithValue("$id", requestId); p.AddWithValue("$device", deviceId.Value.ToString());
             });
             return Results.Ok();
+        });
+        _app.MapPost("/api/v1/smartswitch/request", async (HttpContext context) =>
+        {
+            var deviceId = await AuthenticateAsync(context); if (deviceId is null) return Results.Unauthorized();
+            var requestId = Guid.NewGuid();
+            var launched = _smartSwitch.TryOpenApplication(out var message);
+            await _database.ExecuteAsync("""
+                INSERT INTO smart_switch_requests(id,device_id,status,created_at,started_at,error)
+                VALUES($id,$device,$status,$at,$started,$error)
+                """, p =>
+            {
+                p.AddWithValue("$id", requestId.ToString());
+                p.AddWithValue("$device", deviceId.Value.ToString());
+                p.AddWithValue("$status", launched ? 1 : 3);
+                p.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O"));
+                p.AddWithValue("$started", launched ? DateTimeOffset.UtcNow.ToString("O") : DBNull.Value);
+                p.AddWithValue("$error", launched ? DBNull.Value : message);
+            });
+            return Results.Ok(new { requestId, launched, message });
         });
         _app.MapPost("/api/v1/pair/claim", async (HttpContext context) =>
         {
@@ -177,10 +196,15 @@ public sealed class LocalServer : IDisposable
             var rows = await _database.QueryAsync("""
                 SELECT b.id,b.relative_path,b.sha256,b.verified_at
                 FROM backup_items b
-                WHERE b.device_id=$device AND b.verified_at IS NOT NULL
-                  AND b.last_seen_at <= $cutoff
+                WHERE b.device_id=$device AND b.category='recording' AND b.verified_at IS NOT NULL
+                  AND COALESCE(b.recorded_at,b.last_modified_at) <= $cutoff
+                  AND EXISTS (
+                    SELECT 1 FROM smart_switch_backups s
+                    WHERE s.device_id=b.device_id AND s.status=1 AND s.verified_at IS NOT NULL
+                      AND s.completed_at >= COALESCE(b.recorded_at,b.last_modified_at)
+                  )
                   AND NOT EXISTS (SELECT 1 FROM deletion_candidates c WHERE c.id=b.id AND c.approved_at IS NOT NULL)
-                ORDER BY b.last_seen_at
+                ORDER BY COALESCE(b.recorded_at,b.last_modified_at)
                 """, r => new { Id = Guid.Parse(r.GetString(0)), RelativePath = r.GetString(1), Sha256 = r.GetString(2), VerifiedAt = r.GetString(3) }, p => { p.AddWithValue("$device", deviceId.Value.ToString()); p.AddWithValue("$cutoff", cutoff); });
             foreach (var row in rows)
             {
@@ -257,19 +281,6 @@ public sealed class LocalServer : IDisposable
             var payload = await context.Request.ReadFromJsonAsync<ProgressPayload>();
             if (payload is null) return Results.BadRequest();
             await _backups.UpdateProgressAsync(payload.SyncRunId, payload.FilesProcessed, payload.FilesTotal, payload.CurrentFile, payload.Stage);
-            return Results.Ok();
-        });
-        _app.MapGet("/api/v1/contacts", async (HttpContext context) =>
-        {
-            if (await AuthenticateAsync(context) is null) return Results.Unauthorized();
-            return Results.Ok(await _contacts.ListAsync());
-        });
-        _app.MapPost("/api/v1/contacts/proposals", async (HttpContext context) =>
-        {
-            if (await AuthenticateAsync(context) is null) return Results.Unauthorized();
-            var snapshot = await context.Request.ReadFromJsonAsync<ContactSnapshot>();
-            if (snapshot is null) return Results.BadRequest();
-            await _contacts.AddProposalAsync(snapshot);
             return Results.Ok();
         });
         await _app.StartAsync();

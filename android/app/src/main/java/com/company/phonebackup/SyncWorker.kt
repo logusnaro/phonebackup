@@ -72,10 +72,6 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
                 runId = client.start(config)
                 state.edit().putString(runKey, runId).putInt(processedKey, 0).putInt(storedKey, 0).remove(cursorKey).apply()
                 processed = 0; stored = 0
-                if (androidx.core.content.ContextCompat.checkSelfPermission(applicationContext, android.Manifest.permission.READ_CONTACTS) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                    setProgress(workDataOf("stage" to "주소록 백업 중", "processed" to 0, "total" to 0))
-                    runCatching { client.proposeContacts(config, ContactsRepository(applicationContext).readAll()) }
-                }
             }
             setProgress(workDataOf("stage" to "파일 목록 확인 중", "processed" to processed, "total" to 0))
             val files = (if (tree.isNullOrBlank()) repository.listDefaultFiles(config.deviceId) else repository.listFiles(Uri.parse(tree))).sortedBy { it.second }
@@ -109,10 +105,6 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             val finished = firstIndex >= files.size || (lastProcessedPath.isNotBlank() && files.lastOrNull()?.second == lastProcessedPath)
             if (finished) {
                 client.finish(config, runId, processed, stored)
-                if (androidx.core.content.ContextCompat.checkSelfPermission(applicationContext, android.Manifest.permission.READ_CONTACTS) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                    setProgress(workDataOf("stage" to "주소록 동기화 중", "processed" to processed, "total" to files.size))
-                    client.downloadContacts(config).forEach { ContactsRepository(applicationContext).upsertManaged(it) }
-                }
                 state.edit().remove(runKey).remove(cursorKey).remove(processedKey).remove(storedKey).apply()
                 if (!backupRequestId.isNullOrBlank()) runCatching { client.reportBackupRequestResult(config, backupRequestId, true) }
                 Result.success(workDataOf("processed" to processed, "total" to files.size, "stored" to stored))

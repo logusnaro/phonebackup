@@ -67,7 +67,7 @@ public sealed class DatabaseService : IDisposable
                 CREATE INDEX IF NOT EXISTS ix_backup_items_contact ON backup_items(parsed_contact_name);
                 CREATE INDEX IF NOT EXISTS ix_backup_items_recorded ON backup_items(recorded_at);
                 CREATE TABLE IF NOT EXISTS contacts(
-                  id TEXT PRIMARY KEY, display_name TEXT NOT NULL, company TEXT, notes TEXT,
+                  id TEXT PRIMARY KEY, member_id TEXT REFERENCES members(id), display_name TEXT NOT NULL, company TEXT, notes TEXT,
                   updated_at TEXT NOT NULL, deleted_at TEXT);
                 CREATE TABLE IF NOT EXISTS contact_phones(
                   contact_id TEXT NOT NULL REFERENCES contacts(id), value TEXT NOT NULL,
@@ -93,6 +93,17 @@ public sealed class DatabaseService : IDisposable
                   id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id),
                   status INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
                   started_at TEXT, completed_at TEXT, error TEXT);
+                CREATE TABLE IF NOT EXISTS smart_switch_backups(
+                  id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id),
+                  source_path TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT,
+                  status INTEGER NOT NULL DEFAULT 0, verified_at TEXT,
+                  files_total INTEGER NOT NULL DEFAULT 0, files_verified INTEGER NOT NULL DEFAULT 0,
+                  error TEXT);
+                CREATE INDEX IF NOT EXISTS ix_smart_switch_backups_device ON smart_switch_backups(device_id, verified_at);
+                CREATE TABLE IF NOT EXISTS smart_switch_requests(
+                  id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id),
+                  status INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+                  started_at TEXT, error TEXT);
                 CREATE TABLE IF NOT EXISTS schedules(
                   id TEXT PRIMARY KEY, device_id TEXT REFERENCES devices(id), category TEXT NOT NULL,
                   enabled INTEGER NOT NULL DEFAULT 0, weekdays_json TEXT NOT NULL, times_json TEXT NOT NULL,
@@ -115,7 +126,9 @@ public sealed class DatabaseService : IDisposable
             foreach (var migration in new[]
                      {
                          "ALTER TABLE backup_items ADD COLUMN parsed_target TEXT;",
-                         "ALTER TABLE backup_items ADD COLUMN parsed_affiliation TEXT;"
+                         "ALTER TABLE backup_items ADD COLUMN parsed_affiliation TEXT;",
+                         "ALTER TABLE contacts ADD COLUMN member_id TEXT REFERENCES members(id);",
+                         "CREATE INDEX IF NOT EXISTS ix_contacts_member ON contacts(member_id, display_name);"
                      })
             {
                 try

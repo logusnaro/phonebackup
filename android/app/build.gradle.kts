@@ -6,7 +6,7 @@ plugins {
 
 android { namespace = "com.company.phonebackup"; compileSdk = 35
     // Galaxy S7 (SM-G930S) can still be on its original Android 6.0 build, so support API 23+.
-    defaultConfig { applicationId = "com.company.phonebackup"; minSdk = 23; targetSdk = 35; versionCode = 10; versionName = "1.3.0" }
+    defaultConfig { applicationId = "com.company.phonebackup"; minSdk = 23; targetSdk = 35; versionCode = 11; versionName = "1.4.0" }
     signingConfigs {
         getByName("debug") {
             storeFile = rootProject.file("../.android/debug.keystore")

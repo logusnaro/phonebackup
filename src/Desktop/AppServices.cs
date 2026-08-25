@@ -10,6 +10,7 @@ public sealed class AppServices : IDisposable
     public DatabaseService Database { get; }
     public BackupService Backups { get; }
     public SmartSwitchImportService SmartSwitchImport { get; }
+    public SmartSwitchService SmartSwitch { get; }
     public ContactService Contacts { get; }
     public ScheduleService Schedules { get; }
     public PairingService Pairing { get; }
@@ -22,11 +23,12 @@ public sealed class AppServices : IDisposable
         Database = new DatabaseService(Path.Combine(dataRoot, "phonebackup.db"));
         Backups = new BackupService(Database);
         SmartSwitchImport = new SmartSwitchImportService(Database, Backups);
+        SmartSwitch = new SmartSwitchService(Database);
         Contacts = new ContactService(Database);
         Schedules = new ScheduleService(Database);
         Pairing = new PairingService(Database);
         PairingDiscovery = new PairingDiscoveryService(Pairing);
-        Server = new LocalServer(Database, Backups, Contacts, Pairing, dataRoot);
+        Server = new LocalServer(Database, Backups, SmartSwitch, Pairing, dataRoot);
     }
 
     public async Task StartAsync()

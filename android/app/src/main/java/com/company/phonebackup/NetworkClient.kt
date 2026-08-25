@@ -35,6 +35,7 @@ import java.security.cert.CertificateException
 @Serializable data class DeletionRequestDto(val requestId: String, val items: List<DeletionItemDto>)
 @Serializable data class BackupRequestDto(val requestId: String)
 @Serializable data class BackupRequestResultPayload(val requestId: String, val status: String, val error: String? = null)
+@Serializable data class SmartSwitchRequestDto(val requestId: String, val launched: Boolean, val message: String)
 
 class NetworkClient(private val context: Context, private val store: PairingStore) {
     private val json = Json { ignoreUnknownKeys = true }
@@ -96,6 +97,10 @@ class NetworkClient(private val context: Context, private val store: PairingStor
         val response = authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/backup/requests").headers(headers(config)).get().build()).execute()
         response.use { if (!it.isSuccessful) error("PC 백업 요청 조회 실패: ${it.code}"); return json.decodeFromString(it.body!!.string()) }
     }
+    fun requestSmartSwitchBackup(config: PairingConfig): SmartSwitchRequestDto {
+        val response = authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/smartswitch/request").headers(headers(config)).post("".toRequestBody("application/json".toMediaType())).build()).execute()
+        response.use { if (!it.isSuccessful) error("Smart Switch 요청 실패: ${it.code}"); return json.decodeFromString(it.body!!.string()) }
+    }
     fun reportBackupRequestResult(config: PairingConfig, requestId: String, success: Boolean, error: String? = null) {
         val payload = BackupRequestResultPayload(requestId, if (success) "Completed" else "Failed", error)
         val body = json.encodeToString(BackupRequestResultPayload.serializer(), payload).toRequestBody("application/json".toMediaType())
@@ -149,15 +154,6 @@ class NetworkClient(private val context: Context, private val store: PairingStor
                 if (file.length() == 0L) break
             }
         }
-    }
-    fun proposeContacts(config: PairingConfig, contacts: List<ContactDto>) {
-        @Serializable data class Snapshot(val deviceId: String, val contacts: List<ContactDto>)
-        val body = json.encodeToString(Snapshot.serializer(), Snapshot(config.deviceId, contacts)).toRequestBody("application/json".toMediaType())
-        authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/contacts/proposals").headers(headers(config)).post(body).build()).execute().use { if (!it.isSuccessful) error("주소록 업로드 실패: ${it.code}") }
-    }
-    fun downloadContacts(config: PairingConfig): List<ContactDto> {
-        val response = authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/contacts").headers(headers(config)).get().build()).execute()
-        response.use { if (!it.isSuccessful) error("주소록 다운로드 실패: ${it.code}"); return json.decodeFromString(it.body!!.string()) }
     }
     fun fetchDeletionCandidates(config: PairingConfig, olderThanDays: Int = 90): List<DeletionItemDto> {
         val response = authenticated(config).newCall(Request.Builder().url("${config.serverUrl}/api/v1/deletions/candidates?olderThanDays=$olderThanDays").headers(headers(config)).get().build()).execute()

@@ -64,6 +64,8 @@ public partial class MainWindow : Window
     {
         var rows = await App.Services.Database.QueryAsync("SELECT id,name,status,created_at FROM members ORDER BY created_at", r => new Member(Guid.Parse(r.GetString(0)), r.GetString(1), (MemberStatus)r.GetInt32(2), DateTimeOffset.Parse(r.GetString(3))));
         _members.Clear(); foreach (var member in rows) _members.Add(member);
+        ContactMemberComboBox.ItemsSource = _members;
+        if (ContactMemberComboBox.SelectedIndex < 0 && _members.Count > 0) ContactMemberComboBox.SelectedIndex = 0;
         DeviceCountText.Text = (await App.Services.Database.QueryAsync("SELECT COUNT(*) FROM devices WHERE status=1", r => r.GetInt32(0))).FirstOrDefault().ToString();
     }
 
@@ -94,6 +96,53 @@ public partial class MainWindow : Window
         await RefreshScheduleDevicesAsync();
     }
 
+    private void OpenSmartSwitch_Click(object sender, RoutedEventArgs e)
+    {
+        var opened = App.Services.SmartSwitch.TryOpenApplication(out var message);
+        StatusText.Text = message;
+        if (!opened) MessageBox.Show(message, "Smart Switch", MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
+    private async void VerifySmartSwitch_Click(object sender, RoutedEventArgs e)
+    {
+        if (MembersGrid.SelectedItem is not Member member)
+        {
+            MessageBox.Show("멤버·기기 탭에서 대상 개인 프로필을 먼저 선택하세요.", "백업 검증", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var dialog = new OpenFolderDialog { Title = "검증할 Smart Switch 백업 회차 폴더 선택" };
+        if (dialog.ShowDialog() != true) return;
+        var source = dialog.FolderName;
+        var model = FindSmartSwitchModel(source);
+        var deviceId = await App.Services.SmartSwitch.FindImportedDeviceAsync(member.Id, model);
+        if (deviceId is null)
+        {
+            MessageBox.Show("이 백업 회차가 아직 PB에 등록되지 않았습니다. 먼저 ‘Smart Switch 가져오기’를 실행하세요.", "백업 검증", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        try
+        {
+            var result = await App.Services.SmartSwitch.VerifyAsync(deviceId.Value, source);
+            await RefreshDeletionCountAsync();
+            if (result.Success)
+            {
+                StatusText.Text = $"Smart Switch 검증 완료 · 통화녹음 {result.RecordingFiles}개 · 이제 90일 정책을 적용할 수 있습니다.";
+                MessageBox.Show(StatusText.Text, "백업 검증 완료", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                StatusText.Text = $"Smart Switch 검증 보류 · {string.Join("; ", result.Issues)}";
+                MessageBox.Show(StatusText.Text + "\n\n검증이 성공하기 전에는 모바일 원본 삭제 후보를 만들지 않습니다.", "백업 검증 보류", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.LogCrash("VerifySmartSwitch", ex);
+            StatusText.Text = $"Smart Switch 검증 실패: {ex.Message}";
+            MessageBox.Show(StatusText.Text, "백업 검증", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private async void ImportSmartSwitch_Click(object sender, RoutedEventArgs e)
     {
         if (MembersGrid.SelectedItem is not Member member)
@@ -121,12 +170,14 @@ public partial class MainWindow : Window
         try
         {
             var result = await App.Services.SmartSwitchImport.ImportAsync(member.Id, source, progress);
+            var importedDevice = await App.Services.SmartSwitch.FindImportedDeviceAsync(member.Id, FindSmartSwitchModel(source));
+            var verification = importedDevice is null ? null : await App.Services.SmartSwitch.VerifyAsync(importedDevice.Value, source);
             await RefreshMembersAsync();
             await RefreshFilesAsync();
             await RefreshGeneralFilesAsync();
             await RefreshLiveStatusAsync();
             MessageBox.Show(
-                $"PB 등록이 끝났습니다.\n\n확인한 파일: {result.Seen}개\nPB에 저장: {result.Stored}개\n이미 등록되어 건너뜀: {result.Skipped}개\n실패: {result.Failed}개\n\nSmart Switch 원본은 그대로 유지됩니다.",
+                $"PB 등록이 끝났습니다.\n\n확인한 파일: {result.Seen}개\nPB에 저장: {result.Stored}개\n이미 등록되어 건너뜀: {result.Skipped}개\n실패: {result.Failed}개\nSmart Switch 검증: {(verification?.Success == true ? "성공" : "보류")}\n\nSmart Switch 원본은 그대로 유지됩니다.",
                 "Smart Switch 가져오기 완료", MessageBoxButton.OK,
                 result.Failed == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
         }
@@ -312,14 +363,22 @@ public partial class MainWindow : Window
     private async void RefreshContacts_Click(object sender, RoutedEventArgs e) => await RefreshContactsAsync();
     private async Task RefreshContactsAsync()
     {
-        try { ContactsGrid.ItemsSource = await App.Services.Contacts.ListAsync(); }
+        try
+        {
+            var memberId = (ContactMemberComboBox.SelectedItem as Member)?.Id;
+            ContactsGrid.ItemsSource = memberId is null ? Array.Empty<Contact>() : await App.Services.Contacts.ListAsync(memberId);
+        }
         catch (Exception ex) { StatusText.Text = $"주소록을 불러오지 못했습니다: {ex.Message}"; }
     }
+
+    private async void ContactMemberComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        => await RefreshContactsAsync();
 
     private async void MembersGrid_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         if (MembersGrid.SelectedItem is Member member)
         {
+            ContactMemberComboBox.SelectedItem = member;
             DevicesGrid.ItemsSource = await App.Services.Database.QueryAsync(
                 "SELECT id,member_id,display_name,platform,model,android_version,status,last_seen_at,token_hash FROM devices WHERE member_id=$member ORDER BY last_seen_at DESC",
                 r => new Device(Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), r.GetString(2), r.GetString(3), r.IsDBNull(4) ? null : r.GetString(4), r.IsDBNull(5) ? null : r.GetString(5), (DeviceStatus)r.GetInt32(6), r.IsDBNull(7) ? null : DateTimeOffset.Parse(r.GetString(7)), r.GetString(8)),
@@ -341,13 +400,21 @@ public partial class MainWindow : Window
         var name = Prompt("이름", existing?.DisplayName ?? ""); if (string.IsNullOrWhiteSpace(name)) return;
         var phone = Prompt("전화번호(여러 개는 쉼표로 구분)", existing is null ? "" : string.Join(",", existing.PhoneNumbers)) ?? "";
         var email = Prompt("이메일(여러 개는 쉼표로 구분)", existing is null ? "" : string.Join(",", existing.Emails)) ?? "";
-        var contact = new Contact(existing?.Id ?? Guid.NewGuid(), name.Trim(), phone.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), email.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), existing?.Company, existing?.Notes, DateTimeOffset.Now);
+        var memberId = existing?.MemberId ?? (ContactMemberComboBox.SelectedItem as Member)?.Id;
+        if (memberId is null)
+        {
+            MessageBox.Show("연락처 메모를 저장할 개인 프로필을 먼저 선택하세요.", "연락처 메모");
+            return;
+        }
+        var contact = new Contact(existing?.Id ?? Guid.NewGuid(), name.Trim(), phone.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), email.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), existing?.Company, existing?.Notes, DateTimeOffset.Now, memberId);
         await App.Services.Contacts.SaveAsync(contact); await RefreshContactsAsync(); StatusText.Text = "주소록을 저장했습니다.";
     }
     private async void ExportContacts_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new SaveFileDialog { Filter = "CSV 파일|*.csv", FileName = "업무통합주소록.csv" }; if (dialog.ShowDialog() != true) return;
-        var contacts = await App.Services.Contacts.ListAsync(); await File.WriteAllLinesAsync(dialog.FileName, new[] { "이름,전화번호,이메일,회사" }.Concat(contacts.Select(c => $"\"{c.DisplayName.Replace("\"", "\"\"")}\",\"{string.Join(";", c.PhoneNumbers)}\",\"{string.Join(";", c.Emails)}\",\"{c.Company}\"")), System.Text.Encoding.UTF8); StatusText.Text = "CSV를 내보냈습니다.";
+        var memberId = (ContactMemberComboBox.SelectedItem as Member)?.Id;
+        if (memberId is null) { MessageBox.Show("내보낼 개인 프로필을 먼저 선택하세요.", "CSV 내보내기"); return; }
+        var contacts = await App.Services.Contacts.ListAsync(memberId); await File.WriteAllLinesAsync(dialog.FileName, new[] { "이름,전화번호,이메일,회사" }.Concat(contacts.Select(c => $"\"{c.DisplayName.Replace("\"", "\"\"")}\",\"{string.Join(";", c.PhoneNumbers)}\",\"{string.Join(";", c.Emails)}\",\"{c.Company}\"")), System.Text.Encoding.UTF8); StatusText.Text = "CSV를 내보냈습니다.";
     }
     private async void SearchFiles_Click(object sender, RoutedEventArgs e)
     {
@@ -366,13 +433,23 @@ public partial class MainWindow : Window
         if (MessageBox.Show($"[최종 경고]\n\n선택한 {selected.Count}개 파일의 휴대폰 원본 삭제를 요청합니다.\nPC 백업본은 유지되지만, 휴대폰 파일은 해시 확인 후 삭제되며 복구할 수 없습니다.\n\n계속하시겠습니까?", "모바일 파일 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
         var queued = 0;
+        var deletionCutoff = DateTimeOffset.UtcNow.AddDays(-90).ToString("O");
         foreach (var deviceGroup in selected.GroupBy(x => x.DeviceId))
         {
             var items = new List<object>();
             foreach (var row in deviceGroup)
             {
-                var verified = await App.Services.Database.QueryAsync("SELECT 1 FROM backup_items WHERE id=$id AND device_id=$device AND sha256=$sha AND verified_at IS NOT NULL LIMIT 1", _ => true,
-                    p => { p.AddWithValue("$id", row.BackupItemId); p.AddWithValue("$device", row.DeviceId); p.AddWithValue("$sha", row.Sha256); });
+                var verified = await App.Services.Database.QueryAsync("""
+                    SELECT 1 FROM backup_items b
+                    WHERE b.id=$id AND b.device_id=$device AND b.sha256=$sha
+                      AND b.category='recording' AND b.verified_at IS NOT NULL
+                      AND COALESCE(b.recorded_at,b.last_modified_at) <= $cutoff
+                      AND EXISTS (SELECT 1 FROM smart_switch_backups s
+                                  WHERE s.device_id=b.device_id AND s.status=1 AND s.verified_at IS NOT NULL
+                                    AND s.completed_at >= COALESCE(b.recorded_at,b.last_modified_at))
+                    LIMIT 1
+                    """, _ => true,
+                    p => { p.AddWithValue("$id", row.BackupItemId); p.AddWithValue("$device", row.DeviceId); p.AddWithValue("$sha", row.Sha256); p.AddWithValue("$cutoff", deletionCutoff); });
                 if (verified.Count > 0) items.Add(new { id = row.BackupItemId, relativePath = row.RelativePath, sha256 = row.Sha256 });
             }
             if (items.Count == 0) continue;
@@ -383,7 +460,7 @@ public partial class MainWindow : Window
             });
             queued += items.Count;
         }
-        StatusText.Text = queued == 0 ? "검증 완료된 파일만 모바일 삭제 요청을 만들 수 있습니다." : $"모바일 삭제 {queued}개를 요청했습니다. 휴대폰 앱이 연결되면 원본 경로와 해시를 재검사한 뒤 삭제합니다.";
+        StatusText.Text = queued == 0 ? "Smart Switch 검증·90일 경과·통화녹음 조건을 모두 만족한 파일만 모바일 삭제 요청을 만들 수 있습니다." : $"모바일 삭제 {queued}개를 요청했습니다. 휴대폰 앱이 연결되면 원본 경로와 해시를 재검사한 뒤 삭제합니다.";
     }
 
     private async void DeleteLocal_Click(object sender, RoutedEventArgs e)
@@ -431,9 +508,9 @@ public partial class MainWindow : Window
         var rows = await App.Services.Database.QueryAsync("""
             SELECT b.id,b.device_id,d.member_id, b.relative_path, COALESCE(m.name,'미등록') AS member_name, b.category, b.recorded_at,
                    b.parsed_target,
-                   COALESCE(b.parsed_contact_name, (SELECT c.display_name FROM contacts c
+                     COALESCE(b.parsed_contact_name, (SELECT c.display_name FROM contacts c
                      JOIN contact_phones cp ON cp.contact_id=c.id
-                     WHERE c.deleted_at IS NULL AND cp.normalized=b.parsed_phone_number LIMIT 1)),
+                     WHERE c.deleted_at IS NULL AND c.member_id=d.member_id AND cp.normalized=b.parsed_phone_number LIMIT 1)),
                    b.parsed_affiliation,b.original_file_name, b.verified_at,b.sha256
             FROM backup_items b
             JOIN devices d ON d.id=b.device_id
@@ -462,6 +539,11 @@ public partial class MainWindow : Window
         FilesGrid.ItemsSource = rows;
     }
     private static string CategoryLabel(string category) => category switch { "recording" => "통화녹음", "image" => "사진", "video" => "영상", "document" => "문서", "audio" => "음성", _ => "기타" };
+
+    private static string FindSmartSwitchModel(string sourceRoot)
+        => sourceRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault(x => x.StartsWith("SM-", StringComparison.OrdinalIgnoreCase)) ?? "SmartSwitch";
 
     private void FileGrid_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
