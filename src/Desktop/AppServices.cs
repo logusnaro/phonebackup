@@ -9,6 +9,7 @@ public sealed class AppServices : IDisposable
     public string DataRoot { get; }
     public DatabaseService Database { get; }
     public BackupService Backups { get; }
+    public SmartSwitchImportService SmartSwitchImport { get; }
     public ContactService Contacts { get; }
     public ScheduleService Schedules { get; }
     public PairingService Pairing { get; }
@@ -20,6 +21,7 @@ public sealed class AppServices : IDisposable
         DataRoot = dataRoot;
         Database = new DatabaseService(Path.Combine(dataRoot, "phonebackup.db"));
         Backups = new BackupService(Database);
+        SmartSwitchImport = new SmartSwitchImportService(Database, Backups);
         Contacts = new ContactService(Database);
         Schedules = new ScheduleService(Database);
         Pairing = new PairingService(Database);

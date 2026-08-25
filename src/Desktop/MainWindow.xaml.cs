@@ -94,6 +94,50 @@ public partial class MainWindow : Window
         await RefreshScheduleDevicesAsync();
     }
 
+    private async void ImportSmartSwitch_Click(object sender, RoutedEventArgs e)
+    {
+        if (MembersGrid.SelectedItem is not Member member)
+        {
+            MessageBox.Show("멤버·기기 탭에서 백업을 등록할 멤버를 먼저 선택하세요.", "Smart Switch 가져오기", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var dialog = new OpenFolderDialog { Title = "Smart Switch 백업 회차 폴더 선택" };
+        if (dialog.ShowDialog() != true) return;
+        var source = dialog.FolderName;
+        if (MessageBox.Show(
+                $"‘{member.Name}’ 멤버에 Smart Switch 백업을 등록합니다.\n\n" +
+                "원본 Smart Switch 백업은 수정하지 않고, PB 저장 폴더에 검증된 복사본과 메타데이터를 만듭니다.\n" +
+                "통화녹음·사진·영상·문서 파일만 PB 목록에 표시되며 주소록·문자는 Smart Switch 원본에서 복원합니다.\n\n계속하시겠습니까?",
+                "Smart Switch 가져오기", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+
+        var progress = new Progress<SmartSwitchImportProgress>(value =>
+        {
+            BackupProgressBar.Maximum = Math.Max(1, value.Total);
+            BackupProgressBar.Value = value.Processed;
+            BackupProgressText.Text = $"Smart Switch 가져오기: {value.Processed}/{value.Total} · 저장 {value.Stored} · 실패 {value.Failed} · {value.CurrentFile}";
+            StatusText.Text = BackupProgressText.Text;
+        });
+        try
+        {
+            var result = await App.Services.SmartSwitchImport.ImportAsync(member.Id, source, progress);
+            await RefreshMembersAsync();
+            await RefreshFilesAsync();
+            await RefreshGeneralFilesAsync();
+            await RefreshLiveStatusAsync();
+            MessageBox.Show(
+                $"PB 등록이 끝났습니다.\n\n확인한 파일: {result.Seen}개\nPB에 저장: {result.Stored}개\n이미 등록되어 건너뜀: {result.Skipped}개\n실패: {result.Failed}개\n\nSmart Switch 원본은 그대로 유지됩니다.",
+                "Smart Switch 가져오기 완료", MessageBoxButton.OK,
+                result.Failed == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            App.LogCrash("ImportSmartSwitch", ex);
+            StatusText.Text = $"Smart Switch 가져오기 실패: {ex.Message}";
+            MessageBox.Show(StatusText.Text, "Smart Switch 가져오기", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private async void ManualBackup_Click(object sender, RoutedEventArgs e)
     {
         if (SelectedScheduleDeviceId() is not Guid deviceId)
