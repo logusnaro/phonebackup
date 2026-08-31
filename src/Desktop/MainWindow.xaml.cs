@@ -328,6 +328,28 @@ public partial class MainWindow : Window
         StatusText.Text = "휴대폰의 ‘90일 이전 삭제’ 버튼을 누르면 해시 검증 가능한 삭제 후보가 표시됩니다.";
     }
 
+    private async void ExportDiagnostics_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter = "PB 오류 리포트|PB-error-report-*.zip",
+            FileName = $"PB-error-report-{DateTime.Now:yyyyMMdd-HHmmss}.zip"
+        };
+        if (dialog.ShowDialog() != true) return;
+        try
+        {
+            await App.Services.Diagnostics.ExportAsync(dialog.FileName);
+            StatusText.Text = $"오류 리포트를 저장했습니다: {dialog.FileName}";
+            MessageBox.Show("오류 리포트를 저장했습니다. 파일을 Codex 대화에 첨부해 ‘PB 오류 분석’이라고 남겨 주세요. 파일 내용·연락처·인증정보는 포함하지 않습니다.", "오류 리포트", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            App.LogCrash("ExportDiagnostics", ex);
+            StatusText.Text = $"오류 리포트 저장 실패: {ex.Message}";
+            MessageBox.Show(StatusText.Text, "오류 리포트", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private async Task SaveScheduleAsync(bool enabled, string[]? times = null)
     {
         if (times is null && !TryParseScheduleTimes(ScheduleTimesTextBox.Text, out times, out _)) times = ["19:00"];

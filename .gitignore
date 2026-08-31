@@ -13,6 +13,9 @@ android/**/build/
 .android/
 android/.temp/
 artifacts/
+android-build*.log
+ppt_build/node_modules/
+ppt_build/preview/
 .android-home/
 android/.kotlin/
 android/local.properties

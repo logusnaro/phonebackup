@@ -30,6 +30,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class MainActivity : ComponentActivity() {
     private lateinit var store: PairingStore
@@ -55,6 +59,15 @@ class MainActivity : ComponentActivity() {
             Log.e("PhoneBackup", "folder permission failed", e)
             status.value = "선택한 폴더 권한을 저장하지 못했습니다. 다른 폴더를 선택해 주세요."
         }
+    }
+    private var pendingDiagnosticZip: ByteArray? = null
+    private val diagnosticSaver = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        val bytes = pendingDiagnosticZip
+        pendingDiagnosticZip = null
+        if (uri == null || bytes == null) return@registerForActivityResult
+        runCatching { contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("저장 위치를 열 수 없습니다.") }
+            .onSuccess { status.value = "오류 리포트를 저장했습니다. Codex 대화에 첨부해 ‘PB 오류 분석’이라고 남겨 주세요." }
+            .onFailure { status.value = "오류 리포트 저장 실패: ${it.message ?: it::class.simpleName}" }
     }
     private val usbPairingFile = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@registerForActivityResult
@@ -84,9 +97,10 @@ class MainActivity : ComponentActivity() {
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
-                openFileOutput("phonebackup-crash.log", MODE_APPEND).bufferedWriter().use {
-                    it.appendLine("${System.currentTimeMillis()} [${thread.name}] ${throwable.stackTraceToString()}")
-                }
+                val line = "${System.currentTimeMillis()} [${thread.name}] ${throwable.stackTraceToString()}\n"
+                openFileOutput("phonebackup-crash.log", MODE_APPEND).bufferedWriter().use { it.append(line) }
+                getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)?.resolve("PhoneBackup/diagnostics")?.apply { mkdirs() }
+                    ?.resolve("phonebackup-crash.log")?.appendText(line)
             } catch (_: Exception) { }
             previousHandler?.uncaughtException(thread, throwable)
         }
@@ -255,6 +269,7 @@ class MainActivity : ComponentActivity() {
                 if (backupCurrentFile.value.isNotBlank()) Text("현재 파일: ${backupCurrentFile.value}", style = MaterialTheme.typography.bodySmall, maxLines = 2)
             }
             if (deletionStatus.value.isNotBlank()) Text(deletionStatus.value, style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = { exportDiagnostics() }, modifier = Modifier.fillMaxWidth()) { Text("오류 리포트 공유/저장") }
             Text(status.value, color = MaterialTheme.colorScheme.primary); Text("Smart Switch 백업은 PC에서 실행합니다. 이 앱은 주 1회 백업·삭제 검토 알림을 표시합니다. 휴대폰 주소록은 동기화하지 않습니다.", style = MaterialTheme.typography.bodySmall)
             if (showDeletionConfirm) AlertDialog(
                 onDismissRequest = { showDeletionConfirm = false },
@@ -264,6 +279,68 @@ class MainActivity : ComponentActivity() {
                 dismissButton = { TextButton(onClick = { showDeletionConfirm = false }) { Text("취소") } }
             )
         }
+    }
+
+    private fun exportDiagnostics() {
+        runCatching {
+            val zip = ByteArrayOutputStream()
+            ZipOutputStream(zip).use { archive ->
+                val report = """{
+                  "reportId":${jsonValue(java.util.UUID.randomUUID().toString())},
+                  "createdAt":${jsonValue(System.currentTimeMillis().toString())},
+                  "appVersion":${jsonValue(BuildConfig.VERSION_NAME)},
+                  "model":${jsonValue(redact(Build.MODEL))},
+                  "androidVersion":${jsonValue(redact(Build.VERSION.RELEASE))},
+                  "api":${Build.VERSION.SDK_INT},
+                  "connectionStatus":${jsonValue(redact(connectionStatus.value))},
+                  "backupStage":${jsonValue(redact(backupStage.value))},
+                  "backupProcessed":${backupProcessed.intValue},
+                  "backupTotal":${backupTotal.intValue},
+                  "deletionStatus":${jsonValue(redact(deletionStatus.value))},
+                  "status":${jsonValue(redact(status.value))}
+                }""".trimIndent()
+                addDiagnosticEntry(archive, "report.json", report)
+                val logs = listOfNotNull(
+                    File(filesDir, "phonebackup-crash.log"),
+                    getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)?.resolve("PhoneBackup/diagnostics/phonebackup-crash.log")
+                ).distinct().filter { it.exists() }
+                logs.forEach { file ->
+                    val content = file.readText().takeLast(200_000)
+                    addDiagnosticEntry(archive, "logs/${file.name}", redact(content))
+                }
+            }
+            pendingDiagnosticZip = zip.toByteArray()
+            diagnosticSaver.launch("PB-error-report-${java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())}.zip")
+        }.onFailure { status.value = "오류 리포트 생성 실패: ${it.message ?: it::class.simpleName}" }
+    }
+
+    private fun addDiagnosticEntry(archive: ZipOutputStream, name: String, content: String) {
+        archive.putNextEntry(ZipEntry(name))
+        archive.write(content.toByteArray(Charsets.UTF_8))
+        archive.closeEntry()
+    }
+
+    private fun jsonValue(value: String): String = buildString(value.length + 2) {
+        append('"')
+        value.forEach { ch ->
+            when (ch) {
+                '\\' -> append("\\\\")
+                '"' -> append("\\\"")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> if (ch.code < 0x20) append("\\u%04x".format(ch.code)) else append(ch)
+            }
+        }
+        append('"')
+    }
+
+    private fun redact(value: String): String {
+        var result = value.replace(Regex("[A-Za-z]:\\\\[^\\r\\n\\\"']+"), "<redacted-path>")
+        result = result.replace(Regex("(?i)\\b[a-f0-9]{64}\\b"), "<redacted-sha256>")
+        result = result.replace(Regex("(?i)(token|password|secret|certificate|authorization)(\\s*[:=]\\s*)[^\\s,;]+"), "$1$2<redacted-secret>")
+        result = result.replace(Regex("(?<!\\d)(?:\\+?82[- .]?)?0\\d{1,2}[- .]?\\d{3,4}[- .]?\\d{4}(?!\\d)"), "<redacted-phone>")
+        return result
     }
 
     private fun startDeletion() {

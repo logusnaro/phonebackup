@@ -16,6 +16,7 @@ public sealed class AppServices : IDisposable
     public PairingService Pairing { get; }
     public PairingDiscoveryService PairingDiscovery { get; }
     public LocalServer Server { get; }
+    public DiagnosticsService Diagnostics { get; }
 
     public AppServices(string dataRoot)
     {
@@ -29,6 +30,7 @@ public sealed class AppServices : IDisposable
         Pairing = new PairingService(Database);
         PairingDiscovery = new PairingDiscoveryService(Pairing);
         Server = new LocalServer(Database, Backups, SmartSwitch, Pairing, dataRoot);
+        Diagnostics = new DiagnosticsService(Database);
     }
 
     public async Task StartAsync()
