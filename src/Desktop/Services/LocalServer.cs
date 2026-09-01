@@ -306,10 +306,32 @@ public sealed class LocalServer : IDisposable
     }
     private static string GetLanAddress()
     {
-        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces().Where(n => n.OperationalStatus == OperationalStatus.Up))
-            foreach (var address in ni.GetIPProperties().UnicastAddresses.Select(x => x.Address))
-                if (address.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(address)) return address.ToString();
-        return "127.0.0.1";
+        var candidates = NetworkInterface.GetAllNetworkInterfaces()
+            .Where(n => n.OperationalStatus == OperationalStatus.Up)
+            .SelectMany(ni => ni.GetIPProperties().UnicastAddresses
+                .Select(x => (Interface: ni, Address: x.Address)))
+            .Where(x => x.Address.AddressFamily == AddressFamily.InterNetwork
+                        && !IPAddress.IsLoopback(x.Address)
+                        && !x.Address.Equals(IPAddress.Any)
+                        && !x.Address.Equals(IPAddress.None))
+            .ToList();
+
+        // Prefer the private LAN used by the phone. VPN/Tailscale adapters are
+        // often enumerated first but are not reachable from the office Wi-Fi.
+        var preferred = candidates
+            .OrderByDescending(x => IsPrivateLanAddress(x.Address))
+            .ThenByDescending(x => x.Interface.NetworkInterfaceType is NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211)
+            .FirstOrDefault();
+        return preferred.Address?.ToString() ?? "127.0.0.1";
+    }
+
+    private static bool IsPrivateLanAddress(IPAddress address)
+    {
+        var bytes = address.GetAddressBytes();
+        return bytes.Length == 4 &&
+            (bytes[0] == 10 ||
+             (bytes[0] == 172 && bytes[1] is >= 16 and <= 31) ||
+             (bytes[0] == 192 && bytes[1] == 168));
     }
 
     private static X509Certificate2 CreateCertificate(string lanAddress)
