@@ -563,9 +563,18 @@ public partial class MainWindow : Window
     private static string CategoryLabel(string category) => category switch { "recording" => "통화녹음", "image" => "사진", "video" => "영상", "document" => "문서", "audio" => "음성", _ => "기타" };
 
     private static string FindSmartSwitchModel(string sourceRoot)
-        => sourceRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries)
-            .FirstOrDefault(x => x.StartsWith("SM-", StringComparison.OrdinalIgnoreCase)) ?? "SmartSwitch";
+    {
+        var rootParts = sourceRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+        var model = rootParts.FirstOrDefault(x => x.StartsWith("SM-", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(model)) return model;
+        foreach (var directory in Directory.EnumerateDirectories(sourceRoot, "*", SearchOption.AllDirectories))
+        {
+            var name = Path.GetFileName(directory);
+            if (name.StartsWith("SM-", StringComparison.OrdinalIgnoreCase)) return name;
+        }
+        return "SmartSwitch";
+    }
 
     private void FileGrid_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {

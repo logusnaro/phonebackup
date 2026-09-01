@@ -24,7 +24,7 @@ public sealed class SmartSwitchImportService
     private static readonly HashSet<string> SmartSwitchPrivateFolders = new(StringComparer.OrdinalIgnoreCase)
     {
         "AccountsIcons", "CATEGORY_ICON", "CONTACT", "CONTACTSETTING", "MESSAGE", "MESSAGESETTING",
-        "CALLLOG", "CALLOGSETTING", "SmartSwitch", "OtgBackupTemp"
+        "CALLLOG", "CALLOGSETTING", "OtgBackupTemp"
     };
 
     private readonly DatabaseService _database;
@@ -172,8 +172,18 @@ public sealed class SmartSwitchImportService
 
     private static string FindModel(string sourceRoot)
     {
-        var parts = sourceRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+        var rootParts = sourceRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
-        return parts.FirstOrDefault(x => x.StartsWith("SM-", StringComparison.OrdinalIgnoreCase)) ?? "SmartSwitch";
+        var model = rootParts.FirstOrDefault(x => x.StartsWith("SM-", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(model)) return model;
+
+        // Users often select the SmartSwitch or backup root instead of one
+        // model folder. Discover a nested SM-* directory for device grouping.
+        foreach (var directory in Directory.EnumerateDirectories(sourceRoot, "*", SearchOption.AllDirectories))
+        {
+            var name = Path.GetFileName(directory);
+            if (name.StartsWith("SM-", StringComparison.OrdinalIgnoreCase)) return name;
+        }
+        return "SmartSwitch";
     }
 }
