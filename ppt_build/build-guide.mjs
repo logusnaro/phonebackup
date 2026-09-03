@@ -133,11 +133,11 @@ async function main() {
   // 5
   {
     const s = deck.slides.add(); header(s, "04 · Android", "Google Drive APK는 한 번만 권한을 허용해 설치합니다", 5);
-    bulletList(s, ["Drive에서 PhoneBackupAndroid-release-v1.6.0.apk를 내려받습니다.", "파일을 여는 앱에 ‘알 수 없는 앱 설치’를 일시 허용합니다.", "설치 후 해당 권한은 다시 끄는 것을 권장합니다.", "기존 Debug 앱 때문에 업데이트가 안 되면 기존 PB를 삭제하고 Release APK를 설치합니다."], 92, 218, 700, 230, 21);
+    bulletList(s, ["Drive에서 PhoneBackupAndroid-release-v1.6.0.apk를 내려받습니다.", "파일을 여는 앱에 ‘알 수 없는 앱 설치’를 일시 허용합니다.", "설치 후 해당 권한은 다시 끄는 것을 권장합니다.", "새 서명키를 사용하므로 기존 v1.5 Release·Debug PB를 삭제한 뒤 설치합니다."], 92, 218, 700, 230, 21);
     box(s, 860, 222, 280, 260, LIGHT, "none", "round");
     text(s, "설치 순서", 900, 254, 200, 30, { fontSize: 24, bold: true, color: GREEN, alignment: "center" });
     text(s, "다운로드\n↓\n권한 허용\n↓\n설치\n↓\nPB 실행", 920, 300, 160, 150, { fontSize: 23, bold: true, alignment: "center", lineSpacing: 1.15 });
-    text(s, "Release APK 설치 후 PC 연결과 백업 폴더 권한을 다시 등록할 수 있습니다.", 92, 548, 1000, 32, { fontSize: 19, color: GRAY });
+    text(s, "v1.6.0 설치 후 PC 연결과 백업 폴더 권한을 다시 등록합니다. PC 백업 파일은 유지됩니다.", 92, 548, 1000, 32, { fontSize: 19, color: GRAY });
     notes(s);
   }
 

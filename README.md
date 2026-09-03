@@ -31,6 +31,8 @@ dotnet publish src/Desktop/PhoneBackup.Desktop.csproj -c Release
 
 현재 환경에서 Windows Release 폴더형 배포본과 Android Release APK 빌드를 검증했습니다. Windows는 `artifacts/PhoneBackup-windows-x64-portable.zip` 압축을 풀어 `PhoneBackup.exe`를 실행합니다. 팀원용 Android APK는 `artifacts/PhoneBackupAndroid-release-v1.6.0.apk`이며 Android 6.0(API 23) 이상을 지원합니다. Smart Switch 백업 위치가 달라도 PB가 기본 경로·Samsung 설정·이전 등록 위치를 검색하며, 여러 `SM-*` 기종 폴더는 기종별로 나눠 등록합니다.
 
+v1.6.0부터 새 사내 Release 서명키를 사용합니다. 기존 v1.5.0 Release 또는 Debug 앱이 설치되어 있으면 먼저 제거한 뒤 v1.6.0을 설치하고 PC 연결을 다시 등록해야 합니다. PC에 보관한 백업 파일은 Android 앱 제거의 영향을 받지 않습니다.
+
 Android Studio는 필수가 아닙니다. 저장소의 `scripts/build-android.ps1` 또는 `scripts/build-android-release.ps1`와 설치된 JDK 17·Gradle·Android SDK로 빌드할 수 있습니다. Windows와 Android 앱 아이콘은 초록색 바탕의 흰색 `PB`로 통일되어 있습니다.
 
 ## 운영 주의
