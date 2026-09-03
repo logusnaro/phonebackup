@@ -380,12 +380,36 @@ class MainActivity : ComponentActivity() {
     private fun deleteRequestedItems(config: PairingConfig, items: List<DeletionItemDto>): List<DeletionResultDto> {
         val repository = FileRepository(this@MainActivity)
         val tree = getSharedPreferences("sync", MODE_PRIVATE).getString("treeUri", null)
-        val files = (if (tree.isNullOrBlank()) repository.listDefaultFiles(config.deviceId) else repository.listFiles(Uri.parse(tree))).associateBy { it.second }
+        val files = if (tree.isNullOrBlank()) repository.listDefaultFiles(config.deviceId) else repository.listFiles(Uri.parse(tree))
         return items.map { item ->
-            val uri = files[item.relativePath]
-            if (uri == null) DeletionResultDto(item.id, item.relativePath, false, "휴대폰에서 파일을 찾지 못함")
-            else runCatching { if (repository.deleteIfMatches(uri.first, item.sha256)) DeletionResultDto(item.id, item.relativePath, true) else DeletionResultDto(item.id, item.relativePath, false, "해시가 일치하지 않음") }
-                .getOrElse { DeletionResultDto(item.id, item.relativePath, false, it.message ?: "삭제 확인 실패") }
+            val candidates = findDeletionCandidates(files, item.relativePath)
+            if (candidates.isEmpty()) return@map DeletionResultDto(item.id, item.relativePath, false, "휴대폰에서 파일을 찾지 못함")
+            var lastError: String? = null
+            for ((uri, _) in candidates) {
+                val deleted = runCatching { repository.deleteIfMatches(uri, item.sha256) }
+                    .onFailure { lastError = it.message ?: "삭제 확인 실패" }
+                    .getOrDefault(false)
+                if (deleted) return@map DeletionResultDto(item.id, item.relativePath, true)
+            }
+            DeletionResultDto(item.id, item.relativePath, false, lastError ?: "해시가 일치하지 않음")
+        }
+    }
+
+    private fun findDeletionCandidates(files: List<Pair<Uri, String>>, expectedPath: String): List<Pair<Uri, String>> {
+        fun normalize(path: String) = path.replace('\\', '/').trim('/').lowercase(java.util.Locale.ROOT)
+        val expected = normalize(expectedPath)
+        val exact = files.filter { normalize(it.second) == expected }
+        if (exact.isNotEmpty()) return exact
+
+        // A Storage Access Framework selection can make the same file appear
+        // as TPhoneCallRecords/file.m4a instead of Music/TPhoneCallRecords/file.m4a.
+        // Only use this path fallback to locate candidates; deleteIfMatches still
+        // requires the complete SHA-256 to match before deleting anything.
+        return files.filter { (_, path) ->
+            val actual = normalize(path)
+            expected.endsWith("/$actual") || actual.endsWith("/$expected") ||
+                (actual.substringAfterLast('/') == expected.substringAfterLast('/') &&
+                    actual.contains("tphonecallrecords/") && expected.contains("tphonecallrecords/"))
         }
     }
 }

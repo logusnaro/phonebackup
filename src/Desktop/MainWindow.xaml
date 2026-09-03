@@ -11,8 +11,8 @@
         <Button Content="새 멤버" Click="AddMember_Click" Padding="14,7" Margin="4"/>
         <Button Content="기기 연결" Click="PairDevice_Click" Padding="14,7" Margin="4"/>
         <Button Content="Smart Switch 열기" Click="OpenSmartSwitch_Click" Padding="14,7" Margin="4"/>
-        <Button Content="백업 검증" Click="VerifySmartSwitch_Click" Padding="14,7" Margin="4"/>
-        <Button Content="Smart Switch 가져오기" Click="ImportSmartSwitch_Click" Padding="14,7" Margin="4"/>
+        <Button Content="백업 자동 찾기" Click="AutoDiscoverSmartSwitch_Click" Padding="14,7" Margin="4" Background="#2E7D32" Foreground="White"/>
+        <Button Content="폴더 직접 가져오기" Click="ImportSmartSwitch_Click" Padding="14,7" Margin="4"/>
         <Button Content="수동 백업" Click="ManualBackup_Click" Padding="14,7" Margin="4" Background="#146C94" Foreground="White"/>
       </StackPanel>
     </DockPanel>

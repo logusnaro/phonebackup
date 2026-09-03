@@ -83,7 +83,7 @@ async function main() {
     box(s, 860, 184, 280, 280, LIGHT, "none", "round");
     text(s, "PHONE\nBACKUP", 900, 254, 200, 90, { fontSize: 33, bold: true, color: GREEN, alignment: "center" });
     text(s, "설치 파일 전달은 Google Drive\n백업 데이터는 PC 로컬", 72, 594, 560, 36, { fontSize: 17, color: GRAY });
-    text(s, "v1.5.0", 1070, 652, 130, 24, { fontSize: 16, color: GRAY, alignment: "right" });
+    text(s, "v1.6.0", 1070, 652, 130, 24, { fontSize: 16, color: GRAY, alignment: "right" });
     notes(s);
   }
 
@@ -92,7 +92,7 @@ async function main() {
     const s = deck.slides.add(); header(s, "01 · 전체 흐름", "PB는 백업 파일을 PC에서 관리합니다", 2);
     text(s, "Google Drive는 설치 파일을 전달하는 곳입니다. 음성·문서·사진 백업은 PC에만 남습니다.", 72, 190, 1080, 32, { fontSize: 22, color: GRAY });
     processStep(s, 92, 1, "Smart Switch", "폰을 USB로 연결\n백업 시작", "#6A8F7B");
-    processStep(s, 382, 2, "PB 가져오기", "백업 회차를\n멤버에 등록", GREEN);
+    processStep(s, 382, 2, "PB 자동 찾기", "위치·기종별로\n자동 등록", GREEN);
     processStep(s, 672, 3, "검증·색인", "파일 상태와\n통화 메타데이터 확인", "#508CBB");
     processStep(s, 962, 4, "검토·정리", "90일 경과 녹음만\n사용자 승인 후 삭제", "#B77A45");
     rule(s, 342, 380, 40, GREEN, 3); rule(s, 632, 380, 40, GREEN, 3); rule(s, 922, 380, 40, GREEN, 3);
@@ -133,7 +133,7 @@ async function main() {
   // 5
   {
     const s = deck.slides.add(); header(s, "04 · Android", "Google Drive APK는 한 번만 권한을 허용해 설치합니다", 5);
-    bulletList(s, ["Drive에서 PhoneBackupAndroid-release-v1.5.0.apk를 내려받습니다.", "파일을 여는 앱에 ‘알 수 없는 앱 설치’를 일시 허용합니다.", "설치 후 해당 권한은 다시 끄는 것을 권장합니다.", "기존 Debug 앱 때문에 업데이트가 안 되면 기존 PB를 삭제하고 Release APK를 설치합니다."], 92, 218, 700, 230, 21);
+    bulletList(s, ["Drive에서 PhoneBackupAndroid-release-v1.6.0.apk를 내려받습니다.", "파일을 여는 앱에 ‘알 수 없는 앱 설치’를 일시 허용합니다.", "설치 후 해당 권한은 다시 끄는 것을 권장합니다.", "기존 Debug 앱 때문에 업데이트가 안 되면 기존 PB를 삭제하고 Release APK를 설치합니다."], 92, 218, 700, 230, 21);
     box(s, 860, 222, 280, 260, LIGHT, "none", "round");
     text(s, "설치 순서", 900, 254, 200, 30, { fontSize: 24, bold: true, color: GREEN, alignment: "center" });
     text(s, "다운로드\n↓\n권한 허용\n↓\n설치\n↓\nPB 실행", 920, 300, 160, 150, { fontSize: 23, bold: true, alignment: "center", lineSpacing: 1.15 });
@@ -153,10 +153,10 @@ async function main() {
 
   // 7
   {
-    const s = deck.slides.add(); header(s, "06 · 백업", "Smart Switch 백업 후 PB에서 회차를 가져옵니다", 7);
-    const rows = [["1", "Smart Switch PC 열기", "폰을 USB로 연결하고 Smart Switch에서 백업을 시작합니다."], ["2", "PB → Smart Switch 가져오기", "멤버를 선택한 뒤 백업 회차 폴더를 지정합니다."], ["3", "PB 등록 완료", "PB가 원본을 수정하지 않고 자체 저장소에 복사합니다."]];
+    const s = deck.slides.add(); header(s, "06 · 백업", "Smart Switch 백업 후 PB가 위치·기종을 찾습니다", 7);
+    const rows = [["1", "Smart Switch PC 열기", "폰을 USB로 연결하고 Smart Switch에서 백업을 시작합니다."], ["2", "PB → 백업 자동 찾기", "멤버를 선택한 뒤 ‘백업 자동 찾기’를 누릅니다."], ["3", "자동 분류·검증", "기종별로 분류해 복사하고 파일별 해시를 검증합니다."]];
     rows.forEach(([n, title, body], i) => { const y = 222 + i * 110; box(s, 92, y, 80, 64, GREEN, "none", "round"); text(s, n, 92, y + 15, 80, 30, { fontSize: 26, bold: true, color: "#FFFFFF", alignment: "center" }); text(s, title, 216, y + 4, 460, 34, { fontSize: 25, bold: true }); text(s, body, 216, y + 42, 790, 32, { fontSize: 18, color: GRAY }); });
-    text(s, "PB는 통화녹음 파일명·날짜·전화번호를 색인하고, 일반 파일은 별도 탭으로 분류합니다.", 92, 584, 1050, 32, { fontSize: 20, bold: true, color: GREEN });
+    text(s, "백업 위치가 달라도 기종별로 찾아 등록하며, 통화녹음과 일반 파일을 자동 분류합니다.", 92, 584, 1050, 32, { fontSize: 20, bold: true, color: GREEN });
     notes(s);
   }
 
@@ -214,7 +214,7 @@ async function main() {
   // 12
   {
     const s = deck.slides.add(); header(s, "11 · 완료 확인", "팀원은 이 체크리스트만 따라 하면 됩니다", 12);
-    const checks = ["PC ZIP 압축 해제 후 PhoneBackup.exe 실행", "Android Release APK 설치", "PC에서 멤버 생성 및 6자리 연결", "Smart Switch 백업 완료", "PB 가져오기·검증 완료", "통화녹음·일반 파일 목록 확인", "삭제는 90일 조건과 사용자 확인 후 실행", "오류 시 리포트 ZIP을 Codex에 첨부"];
+    const checks = ["PC ZIP 압축 해제 후 PhoneBackup.exe 실행", "Android Release APK 설치", "PC에서 멤버 생성 및 6자리 연결", "Smart Switch 백업 완료", "PB 자동 찾기·검증 완료", "통화녹음·일반 파일 목록 확인", "삭제는 90일 조건과 사용자 확인 후 실행", "오류 시 리포트 ZIP을 Codex에 첨부"];
     checks.forEach((v, i) => { const col = i < 4 ? 0 : 1; const row = i % 4; const x = col === 0 ? 110 : 650; const y = 220 + row * 76; text(s, "□", x, y, 36, 32, { fontSize: 27, color: GREEN }); text(s, v, x + 54, y + 2, 460, 40, { fontSize: 20 }); });
     rule(s, 110, 566, 1000, GREEN, 2);
     text(s, "PB 백업 데이터는 PC 로컬에 보관하고, 원본 삭제는 항상 마지막 단계로 미룹니다.", 110, 594, 1000, 34, { fontSize: 22, bold: true, color: GREEN });

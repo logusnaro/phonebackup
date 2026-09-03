@@ -2,6 +2,8 @@ PB 설치 및 오류 대응 요약
 
 [PC]
 - ZIP 전체를 압축 해제한 뒤 PhoneBackup.exe를 실행합니다.
+- Smart Switch 백업 완료 후 멤버를 고르고 '백업 자동 찾기'를 누릅니다.
+- 여러 기종은 자동으로 분리되며, 못 찾을 때만 백업 상위 폴더를 직접 지정합니다.
 - 앱이 실행되지 않으면 %TEMP%\PhoneBackup-startup-error.log 또는
   %TEMP%\PhoneBackup-crash.log를 확인합니다.
 - 앱 설정에서 오류 리포트 내보내기를 눌러 ZIP을 저장한 뒤 Codex에 첨부합니다.

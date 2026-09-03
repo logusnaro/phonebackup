@@ -6,7 +6,7 @@ plugins {
 
 android { namespace = "com.company.phonebackup"; compileSdk = 35
     // Galaxy S7 (SM-G930S) can still be on its original Android 6.0 build, so support API 23+.
-    defaultConfig { applicationId = "com.company.phonebackup"; minSdk = 23; targetSdk = 35; versionCode = 12; versionName = "1.5.0" }
+    defaultConfig { applicationId = "com.company.phonebackup"; minSdk = 23; targetSdk = 35; versionCode = 13; versionName = "1.6.0" }
     signingConfigs {
         getByName("debug") {
             storeFile = rootProject.file("../.android/debug.keystore")
@@ -20,13 +20,12 @@ android { namespace = "com.company.phonebackup"; compileSdk = 35
             val keystorePassword = providers.environmentVariable("PB_KEYSTORE_PASSWORD").orNull
             val keyAliasValue = providers.environmentVariable("PB_KEY_ALIAS").orNull ?: "phonebackup"
             val keyPasswordValue = providers.environmentVariable("PB_KEY_PASSWORD").orNull
-            if (keystorePassword.isNullOrBlank() || keyPasswordValue.isNullOrBlank()) {
-                throw GradleException("Release 서명에는 PB_KEYSTORE_PASSWORD와 PB_KEY_PASSWORD 환경 변수가 필요합니다.")
+            if (!keystorePassword.isNullOrBlank() && !keyPasswordValue.isNullOrBlank()) {
+                storeFile = file(keystorePath)
+                storePassword = keystorePassword
+                keyAlias = keyAliasValue
+                keyPassword = keyPasswordValue
             }
-            storeFile = file(keystorePath)
-            storePassword = keystorePassword
-            keyAlias = keyAliasValue
-            keyPassword = keyPasswordValue
         }
     }
     buildTypes { release { isMinifyEnabled = false; signingConfig = signingConfigs.getByName("release"); proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro") } }

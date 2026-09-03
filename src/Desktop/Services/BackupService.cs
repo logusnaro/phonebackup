@@ -147,10 +147,11 @@ public sealed class BackupService
         return File.OpenRead(rows[0]);
     }
 
-    public static async Task<string> ComputeSha256Async(string path)
+    public static async Task<string> ComputeSha256Async(string path, CancellationToken cancellationToken = default)
     {
-        await using var stream = File.OpenRead(path);
-        return Convert.ToHexString(await SHA256.HashDataAsync(stream));
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete, 1024 * 1024, useAsync: true);
+        return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken));
     }
 
     public static string NormalizeRelativePath(string relativePath)

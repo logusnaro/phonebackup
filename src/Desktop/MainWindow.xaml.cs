@@ -103,43 +103,42 @@ public partial class MainWindow : Window
         if (!opened) MessageBox.Show(message, "Smart Switch", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
-    private async void VerifySmartSwitch_Click(object sender, RoutedEventArgs e)
+    private async void AutoDiscoverSmartSwitch_Click(object sender, RoutedEventArgs e)
     {
         if (MembersGrid.SelectedItem is not Member member)
         {
-            MessageBox.Show("멤버·기기 탭에서 대상 개인 프로필을 먼저 선택하세요.", "백업 검증", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-        var dialog = new OpenFolderDialog { Title = "검증할 Smart Switch 백업 회차 폴더 선택" };
-        if (dialog.ShowDialog() != true) return;
-        var source = dialog.FolderName;
-        var model = FindSmartSwitchModel(source);
-        var deviceId = await App.Services.SmartSwitch.FindImportedDeviceAsync(member.Id, model);
-        if (deviceId is null)
-        {
-            MessageBox.Show("이 백업 회차가 아직 PB에 등록되지 않았습니다. 먼저 ‘Smart Switch 가져오기’를 실행하세요.", "백업 검증", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show("멤버·기기 탭에서 백업 주인인 멤버를 먼저 선택하세요.", "백업 자동 찾기", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         try
         {
-            var result = await App.Services.SmartSwitch.VerifyAsync(deviceId.Value, source);
-            await RefreshDeletionCountAsync();
-            if (result.Success)
+            BackupProgressBar.IsIndeterminate = true;
+            BackupProgressText.Text = "Smart Switch 백업 위치를 자동으로 찾는 중…";
+            var scanProgress = new Progress<SmartSwitchDiscoveryProgress>(value =>
             {
-                StatusText.Text = $"Smart Switch 검증 완료 · 통화녹음 {result.RecordingFiles}개 · 이제 90일 정책을 적용할 수 있습니다.";
-                MessageBox.Show(StatusText.Text, "백업 검증 완료", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-            else
+                BackupProgressText.Text = $"백업 위치 검색 중 · {value.LocationsScanned}곳 확인 · {value.CandidatesFound}개 발견";
+                StatusText.Text = $"검색 중: {value.Location}";
+            });
+            var candidates = await App.Services.SmartSwitchDiscovery.DiscoverDefaultAsync(scanProgress);
+            if (candidates.Count == 0)
             {
-                StatusText.Text = $"Smart Switch 검증 보류 · {string.Join("; ", result.Issues)}";
-                MessageBox.Show(StatusText.Text + "\n\n검증이 성공하기 전에는 모바일 원본 삭제 후보를 만들지 않습니다.", "백업 검증 보류", MessageBoxButton.OK, MessageBoxImage.Warning);
+                BackupProgressText.Text = "자동으로 찾은 Smart Switch 백업이 없습니다.";
+                MessageBox.Show(
+                    "Windows 설정·문서·바탕 화면·OneDrive와 이전 등록 위치를 확인했지만 백업 파일을 찾지 못했습니다.\n\nSmart Switch에서 백업을 끝낸 뒤 다시 시도하거나 ‘폴더 직접 가져오기’로 백업의 상위 폴더를 한 번 지정하세요.",
+                    "백업 자동 찾기", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
             }
+            await ImportSmartSwitchCandidatesAsync(member, candidates);
         }
         catch (Exception ex)
         {
-            App.LogCrash("VerifySmartSwitch", ex);
-            StatusText.Text = $"Smart Switch 검증 실패: {ex.Message}";
-            MessageBox.Show(StatusText.Text, "백업 검증", MessageBoxButton.OK, MessageBoxImage.Error);
+            App.LogCrash("AutoDiscoverSmartSwitch", ex);
+            StatusText.Text = $"백업 자동 검색 실패: {ex.Message}";
+            MessageBox.Show(StatusText.Text, "백업 자동 찾기", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            BackupProgressBar.IsIndeterminate = false;
         }
     }
 
@@ -147,46 +146,96 @@ public partial class MainWindow : Window
     {
         if (MembersGrid.SelectedItem is not Member member)
         {
-            MessageBox.Show("멤버·기기 탭에서 백업을 등록할 멤버를 먼저 선택하세요.", "Smart Switch 가져오기", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show("멤버·기기 탭에서 백업을 등록할 멤버를 먼저 선택하세요.", "백업 자동 찾기", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        var dialog = new OpenFolderDialog { Title = "Smart Switch 백업 회차 폴더 선택" };
+        var dialog = new OpenFolderDialog { Title = "Smart Switch 백업 폴더 또는 그 상위 폴더 선택" };
         if (dialog.ShowDialog() != true) return;
-        var source = dialog.FolderName;
-        if (MessageBox.Show(
-                $"‘{member.Name}’ 멤버에 Smart Switch 백업을 등록합니다.\n\n" +
-                "원본 Smart Switch 백업은 수정하지 않고, PB 저장 폴더에 검증된 복사본과 메타데이터를 만듭니다.\n" +
-                "통화녹음·사진·영상·문서 파일만 PB 목록에 표시되며 주소록·문자는 Smart Switch 원본에서 복원합니다.\n\n계속하시겠습니까?",
-                "Smart Switch 가져오기", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-
-        var progress = new Progress<SmartSwitchImportProgress>(value =>
-        {
-            BackupProgressBar.Maximum = Math.Max(1, value.Total);
-            BackupProgressBar.Value = value.Processed;
-            BackupProgressText.Text = $"Smart Switch 가져오기: {value.Processed}/{value.Total} · 저장 {value.Stored} · 실패 {value.Failed} · {value.CurrentFile}";
-            StatusText.Text = BackupProgressText.Text;
-        });
         try
         {
-            var result = await App.Services.SmartSwitchImport.ImportAsync(member.Id, source, progress);
-            var importedDevice = await App.Services.SmartSwitch.FindImportedDeviceAsync(member.Id, FindSmartSwitchModel(source));
-            var verification = importedDevice is null ? null : await App.Services.SmartSwitch.VerifyAsync(importedDevice.Value, source);
-            await RefreshMembersAsync();
-            await RefreshFilesAsync();
-            await RefreshGeneralFilesAsync();
-            await RefreshLiveStatusAsync();
-            MessageBox.Show(
-                $"PB 등록이 끝났습니다.\n\n확인한 파일: {result.Seen}개\nPB에 저장: {result.Stored}개\n이미 등록되어 건너뜀: {result.Skipped}개\n실패: {result.Failed}개\nSmart Switch 검증: {(verification?.Success == true ? "성공" : "보류")}\n\nSmart Switch 원본은 그대로 유지됩니다.",
-                "Smart Switch 가져오기 완료", MessageBoxButton.OK,
-                result.Failed == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            BackupProgressBar.IsIndeterminate = true;
+            var candidates = await App.Services.SmartSwitchDiscovery.DiscoverSelectedAsync(dialog.FolderName);
+            BackupProgressBar.IsIndeterminate = false;
+            if (candidates.Count == 0)
+            {
+                MessageBox.Show(
+                    "선택한 폴더에서 PB가 관리할 통화녹음·사진·영상·문서 파일을 찾지 못했습니다.\n\n.spbm만 있다면 연락처 전용 백업이므로 Smart Switch에서 복원할 수 있지만 PB 파일 목록에는 등록되지 않습니다.",
+                    "가져올 파일 없음", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            await ImportSmartSwitchCandidatesAsync(member, candidates);
         }
         catch (Exception ex)
         {
             App.LogCrash("ImportSmartSwitch", ex);
-            StatusText.Text = $"Smart Switch 가져오기 실패: {ex.Message}";
-            MessageBox.Show(StatusText.Text, "Smart Switch 가져오기", MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = $"Smart Switch 백업 찾기 실패: {ex.Message}";
+            MessageBox.Show(StatusText.Text, "백업 자동 찾기", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+        finally { BackupProgressBar.IsIndeterminate = false; }
+    }
+
+    private async Task ImportSmartSwitchCandidatesAsync(Member member, IReadOnlyList<SmartSwitchBackupCandidate> candidates)
+    {
+        var preview = string.Join("\n", candidates.Take(10).Select(candidate => $"• {candidate.Summary}"));
+        if (candidates.Count > 10) preview += $"\n• 그 외 {candidates.Count - 10}개";
+        if (MessageBox.Show(
+                $"‘{member.Name}’ 멤버의 백업 {candidates.Count}개를 찾았습니다.\n\n{preview}\n\n" +
+                "PB는 원본을 수정하지 않고 파일별 SHA-256 검증 후 자체 저장소에 복사합니다. " +
+                "모델이 일치하는 등록 휴대폰만 모바일 삭제 기능과 연결되며, 나머지는 PC 보관 전용으로 등록됩니다.\n\n계속하시겠습니까?",
+                "Smart Switch 백업 등록", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+
+        var outcomes = new List<string>();
+        var anyFailure = false;
+        foreach (var (candidate, candidateIndex) in candidates.Select((value, index) => (value, index)))
+        {
+            var importProgress = new Progress<SmartSwitchImportProgress>(value =>
+            {
+                BackupProgressBar.IsIndeterminate = false;
+                BackupProgressBar.Maximum = Math.Max(1, value.Total);
+                BackupProgressBar.Value = value.Processed;
+                BackupProgressText.Text = $"[{candidateIndex + 1}/{candidates.Count}] {candidate.Model} 가져오기 · {value.Processed}/{value.Total} · 저장 {value.Stored} · 실패 {value.Failed} · {value.CurrentFile}";
+                StatusText.Text = BackupProgressText.Text;
+            });
+            try
+            {
+                var imported = await App.Services.SmartSwitchImport.ImportAsync(member.Id, candidate.RootPath, importProgress);
+                var verifyProgress = new Progress<SmartSwitchVerificationProgress>(value =>
+                {
+                    BackupProgressBar.Maximum = Math.Max(1, value.Total);
+                    BackupProgressBar.Value = value.Processed;
+                    BackupProgressText.Text = $"[{candidateIndex + 1}/{candidates.Count}] {candidate.Model} 검증 · {value.Processed}/{value.Total} · {value.CurrentFile}";
+                });
+                var verification = await App.Services.SmartSwitch.VerifyAsync(imported.DeviceId, candidate.RootPath, verifyProgress);
+                var link = imported.LinkedToPairedPhone ? "등록 휴대폰과 연결됨" : "PC 보관 전용";
+                var warning = verification.Warnings.Count == 0 ? string.Empty : $" · 안내 {verification.Warnings.Count}건";
+                outcomes.Add($"{candidate.Model}: 저장 {imported.Stored}, 기존 {imported.Skipped}, 실패 {imported.Failed} · 검증 {verification.VerifiedFiles}/{verification.TotalFiles} · {link}{warning}");
+                if (imported.Failed > 0 || !verification.Success)
+                {
+                    anyFailure = true;
+                    foreach (var error in imported.Errors.Concat(verification.Errors).Take(5)) outcomes.Add($"  - {error}");
+                }
+            }
+            catch (Exception ex)
+            {
+                anyFailure = true;
+                App.LogCrash("ImportSmartSwitchCandidate", ex);
+                outcomes.Add($"{candidate.Model}: 등록 실패 · {ex.Message}");
+            }
+        }
+
+        await RefreshMembersAsync();
+        await RefreshFilesAsync();
+        await RefreshGeneralFilesAsync();
+        await RefreshDeletionCountAsync();
+        await RefreshLiveStatusAsync();
+        BackupProgressBar.Value = BackupProgressBar.Maximum;
+        BackupProgressText.Text = anyFailure ? "Smart Switch 등록 완료 · 일부 항목 확인 필요" : "Smart Switch 등록 및 검증 완료";
+        StatusText.Text = BackupProgressText.Text;
+        MessageBox.Show(
+            $"Smart Switch 백업 처리가 끝났습니다.\n\n{string.Join("\n", outcomes.Take(30))}\n\n원본 Smart Switch 백업은 그대로 유지됩니다. 검증이 끝나지 않은 파일은 모바일 삭제 대상이 되지 않습니다.",
+            anyFailure ? "Smart Switch 처리 결과 확인" : "Smart Switch 처리 완료",
+            MessageBoxButton.OK, anyFailure ? MessageBoxImage.Warning : MessageBoxImage.Information);
     }
 
     private async void ManualBackup_Click(object sender, RoutedEventArgs e)
@@ -462,8 +511,9 @@ public partial class MainWindow : Window
             foreach (var row in deviceGroup)
             {
                 var verified = await App.Services.Database.QueryAsync("""
-                    SELECT 1 FROM backup_items b
+                    SELECT 1 FROM backup_items b JOIN devices d ON d.id=b.device_id
                     WHERE b.id=$id AND b.device_id=$device AND b.sha256=$sha
+                      AND d.platform='Android' AND d.status=1
                       AND b.category='recording' AND b.verified_at IS NOT NULL
                       AND COALESCE(b.recorded_at,b.last_modified_at) <= $cutoff
                       AND EXISTS (SELECT 1 FROM smart_switch_backups s
@@ -482,7 +532,9 @@ public partial class MainWindow : Window
             });
             queued += items.Count;
         }
-        StatusText.Text = queued == 0 ? "Smart Switch 검증·90일 경과·통화녹음 조건을 모두 만족한 파일만 모바일 삭제 요청을 만들 수 있습니다." : $"모바일 삭제 {queued}개를 요청했습니다. 휴대폰 앱이 연결되면 원본 경로와 해시를 재검사한 뒤 삭제합니다.";
+        StatusText.Text = queued == 0
+            ? "삭제 요청 없음: 90일 경과·통화녹음·해시 검증·동일 모델의 등록 휴대폰 연결 조건을 모두 확인하세요. 일반 파일과 PC 보관 전용 기기는 모바일에서 삭제하지 않습니다."
+            : $"모바일 삭제 {queued}개를 요청했습니다. 휴대폰 앱이 연결되면 원본 경로와 해시를 재검사한 뒤 삭제합니다.";
     }
 
     private async void DeleteLocal_Click(object sender, RoutedEventArgs e)
@@ -561,20 +613,6 @@ public partial class MainWindow : Window
         FilesGrid.ItemsSource = rows;
     }
     private static string CategoryLabel(string category) => category switch { "recording" => "통화녹음", "image" => "사진", "video" => "영상", "document" => "문서", "audio" => "음성", _ => "기타" };
-
-    private static string FindSmartSwitchModel(string sourceRoot)
-    {
-        var rootParts = sourceRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
-        var model = rootParts.FirstOrDefault(x => x.StartsWith("SM-", StringComparison.OrdinalIgnoreCase));
-        if (!string.IsNullOrWhiteSpace(model)) return model;
-        foreach (var directory in Directory.EnumerateDirectories(sourceRoot, "*", SearchOption.AllDirectories))
-        {
-            var name = Path.GetFileName(directory);
-            if (name.StartsWith("SM-", StringComparison.OrdinalIgnoreCase)) return name;
-        }
-        return "SmartSwitch";
-    }
 
     private void FileGrid_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
