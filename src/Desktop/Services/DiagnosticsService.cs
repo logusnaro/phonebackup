@@ -30,21 +30,20 @@ public sealed class DiagnosticsService
             appVersion = Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "unknown",
             os = Environment.OSVersion.VersionString,
             processArchitecture = RuntimeInformation.ProcessArchitecture.ToString(),
-            recentSyncRuns = await _database.QueryAsync("""
-                SELECT status,started_at,finished_at,files_seen,files_stored,error
-                FROM sync_runs ORDER BY started_at DESC LIMIT 10
+            recentSources = await _database.QueryAsync("""
+                SELECT model,last_scan_at,files_count,total_bytes,status
+                FROM managed_sources ORDER BY last_scan_at DESC LIMIT 10
                 """, r => new
                 {
-                    status = r.GetInt32(0), startedAt = r.GetString(1), finishedAt = r.IsDBNull(2) ? null : r.GetString(2),
-                    filesSeen = r.GetInt32(3), filesStored = r.GetInt32(4), error = r.IsDBNull(5) ? null : Redact(r.GetString(5))
+                    model = r.GetString(0), lastScanAt = r.IsDBNull(1) ? null : r.GetString(1),
+                    files = r.GetInt32(2), bytes = r.GetInt64(3), status = r.GetInt32(4)
                 }),
             counts = new
             {
-                members = await CountAsync("SELECT COUNT(*) FROM members"),
-                devices = await CountAsync("SELECT COUNT(*) FROM devices"),
-                backupItems = await CountAsync("SELECT COUNT(*) FROM backup_items"),
-                recordings = await CountAsync("SELECT COUNT(*) FROM backup_items WHERE category='recording'"),
-                deletionCandidates = await CountAsync("SELECT COUNT(*) FROM deletion_candidates WHERE approved_at IS NULL")
+                sources = await CountAsync("SELECT COUNT(*) FROM managed_sources"),
+                files = await CountAsync("SELECT COUNT(*) FROM managed_files"),
+                recordings = await CountAsync("SELECT COUNT(*) FROM managed_files WHERE category='recording'"),
+                verified = await CountAsync("SELECT COUNT(*) FROM managed_files WHERE verified_at IS NOT NULL")
             }
         };
 

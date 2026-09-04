@@ -16,6 +16,8 @@ artifacts/
 android-build*.log
 ppt_build/node_modules/
 ppt_build/preview/
+ppt_build/v2/node_modules/
+ppt_build/v2/rendered/
 .android-home/
 android/.kotlin/
 android/local.properties

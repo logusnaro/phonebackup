@@ -1,50 +1,57 @@
-# 업무폰 통합 백업
+# PB 2.0 · Smart Switch 백업 관리
 
-Windows PC에서 개인 프로필별 Samsung Smart Switch 백업을 검증·색인하고, 90일 경과 통화녹음 삭제를 승인하는 개인용 PB 도구입니다.
+PB는 두 개의 서로 독립적인 앱입니다.
 
-## 현재 구현된 범위
+- **Windows 앱**: Samsung Smart Switch가 PC에 만든 백업 폴더를 찾아 파일 유형별로 색인하고 관리합니다.
+- **Android 앱**: 휴대폰 저장공간을 점검하고, 사용자가 Smart Switch 백업을 확인한 뒤 오래된 통화녹음과 선택 파일을 정리합니다.
 
-- Windows WPF/.NET 8 데스크톱 앱과 Kotlin Android 앱 프로젝트
-- 멤버/기기 모델, SQLite 스키마, 감사 로그
-- 6자리 Wi‑Fi 페어링 코드와 기기별 토큰 인증
-- 로컬 HTTPS 수신 서버와 SHA-256 검증 파일 업로드
-- 원본 파일명 보존, 해시 기반 중복 저장 방지, 백업 폴더 선택
-- Smart Switch PC 실행 요청·예상 밖 위치 자동 탐색·기종별 분리·파일별 검증
-- Smart Switch 검증 성공 전 삭제 후보 생성 차단
-- Android 주소록 권한·주소록 동기화 제거
-- Android 주 1회 백업·삭제 검토 알림과 삭제 전 해시 재검사
-- 대시보드·멤버·주소록·파일·설정 기본 화면
+PC와 모바일은 Wi‑Fi·USB·로컬 서버로 통신하지 않습니다. 회사 PC 보안 정책을 우회하지 않으며, 연락처 동기화도 하지 않습니다.
+
+## Windows 기능
+
+- Smart Switch 실행 및 기본 경로·Samsung 설정·문서·다운로드·바탕 화면·OneDrive 자동 탐색
+- 예상 밖 위치는 상위 폴더를 한 번 선택하면 기종별 `SM-*` 폴더 자동 분리
+- 원본을 복사하거나 수정하지 않는 제자리 색인
+- 통화녹음, 사진, 영상, 문서, 오디오, 압축·앱·삼성 전용 데이터, 기타 탭
+- 통화녹음 파일명에서 날짜·전화번호·상대방·대상·소속 추출
+- 통화녹음 날짜별/상대방별 그룹, 검색·정렬
+- 사진 미리보기, 파일 실행, 탐색기에서 해당 파일 자동 선택
+- 선택 백업 폴더 SHA‑256 무결성 확인
+- 개인정보를 제외한 오류 리포트 내보내기
+
+Smart Switch 백업 내부의 개별 파일을 삭제하면 삼성 복원이 깨질 수 있으므로 PB PC 앱은 원본 삭제 기능을 제공하지 않습니다. 폴더를 목록에서 제거해도 PB 색인만 삭제됩니다.
+
+## Android 기능
+
+- 전체 저장공간 사용률과 80/85/90% 위험 기준
+- 사진·영상·오디오 자동 검사 및 사용자가 선택한 문서/기타 폴더 검사
+- 주 1회 백업·정리 알림
+- 통화녹음 90일 초과 후보, 일반 파일 유형별 목록, 이미지 미리보기와 다중 선택
+- 백업 전 목록 스냅샷 → Smart Switch 안내 → 3단계 사용자 확인 → 24시간 삭제 허용
+- 스냅샷 이후 새로 생기거나 변경된 파일 및 90일 이내 통화녹음 삭제 차단
+- 삭제 직전 경고와 Android 시스템 삭제 승인
+- 개인정보를 제외한 오류 리포트 내보내기
+
+Samsung은 Smart Switch PC 백업 완료 여부를 Android 앱이 확인하는 공개 API를 제공하지 않습니다. 따라서 PB는 백업을 자동으로 증명한다고 표시하지 않고 사용자가 Smart Switch 완료 화면을 직접 확인하도록 합니다.
 
 ## 빌드
 
-필요한 도구는 .NET 8 SDK/Windows Desktop Runtime, JDK 17, Gradle, Android SDK입니다. Android Studio는 필요하지 않습니다.
+Android Studio는 필수가 아닙니다. 저장소에 준비된 .NET 8, JDK 17, Gradle, Android SDK로 빌드할 수 있습니다.
 
 ```powershell
-dotnet restore PhoneBackup.sln
-dotnet publish src/Desktop/PhoneBackup.Desktop.csproj -c Release
-# Android Studio에서 android 폴더를 열고 Gradle Sync 후 assembleRelease 실행
-
-# 설치된 프로젝트 전용 도구로 재현
 .\scripts\build-windows.ps1
 .\scripts\build-android.ps1
+.\scripts\build-android-release.ps1
+.\scripts\build-distribution.ps1
 ```
 
-현재 환경에서 Windows Release 폴더형 배포본과 Android Release APK 빌드를 검증했습니다. Windows는 `artifacts/PhoneBackup-windows-x64-portable.zip` 압축을 풀어 `PhoneBackup.exe`를 실행합니다. 팀원용 Android APK는 `artifacts/PhoneBackupAndroid-release-v1.6.0.apk`이며 Android 6.0(API 23) 이상을 지원합니다. Smart Switch 백업 위치가 달라도 PB가 기본 경로·Samsung 설정·이전 등록 위치를 검색하며, 여러 `SM-*` 기종 폴더는 기종별로 나눠 등록합니다.
+Release APK 빌드에는 기존 서명키와 `PB_KEYSTORE_PASSWORD`, `PB_KEY_PASSWORD` 환경 변수가 필요합니다. 서명키를 바꾸면 기존 Release 앱 위에 업데이트할 수 없으므로 임의로 새 키를 만들지 않습니다. 마지막 명령은 Windows ZIP, Release APK, PPT, 안내문과 SHA-256 목록을 `artifacts/PB-2.0-배포`에 모읍니다.
 
-v1.6.0부터 새 사내 Release 서명키를 사용합니다. 기존 v1.5.0 Release 또는 Debug 앱이 설치되어 있으면 먼저 제거한 뒤 v1.6.0을 설치하고 PC 연결을 다시 등록해야 합니다. PC에 보관한 백업 파일은 Android 앱 제거의 영향을 받지 않습니다.
+- Windows: `artifacts/PhoneBackup-windows-x64-portable.zip`
+- Android: `artifacts/PhoneBackupAndroid-release-v2.0.0.apk`
+- 지원: Windows 10/11 x64, Android 6.0(API 23) 이상
+- 아이콘: 초록색 바탕의 흰색 PB로 고정
 
-Android Studio는 필수가 아닙니다. 저장소의 `scripts/build-android.ps1` 또는 `scripts/build-android-release.ps1`와 설치된 JDK 17·Gradle·Android SDK로 빌드할 수 있습니다. Windows와 Android 앱 아이콘은 초록색 바탕의 흰색 `PB`로 통일되어 있습니다.
+기존 v1.x 데이터베이스와 저장 파일은 삭제하지 않습니다. PB 2.0은 기존 연결·연락처·업로드 데이터를 화면에 표시하거나 변경하지 않습니다. 이전 구현은 Git 태그 `legacy-v1.6.0`에 보존되어 있습니다.
 
-## 운영 주의
-
-자세한 설치·시험 절차는 [한국어 설치 가이드](docs/INSTALL_GUIDE_KO.md)를 먼저 읽으세요.
-
-- 최초 버전은 음성 전사·요약·중요도 분석을 하지 않습니다.
-- 정식 백업 엔진은 Smart Switch PC입니다. PB의 Android 파일 업로드는 보조 백업으로만 사용합니다.
-- Smart Switch 검증·PB 등록·90일 경과·사용자 승인을 모두 통과하기 전에는 휴대폰 원본을 삭제하지 않습니다.
-- Smart Switch의 JSON 보조 파일이 없어도 실제 복사본의 크기와 SHA-256이 원본과 일치하면 검증할 수 있습니다. 파일이 없거나 바뀌면 검증과 삭제 후보 생성을 차단합니다.
-- 삭제 대상은 1차로 통화녹음으로 제한하며, 사진·문서·동영상은 별도 매니페스트가 준비될 때까지 삭제하지 않습니다.
-- 백업 기종과 연결된 Android 기종이 정확히 일치할 때만 모바일 삭제 후보를 만듭니다. 불일치·미확인 기종은 PC 보관 전용입니다.
-- 개인 프로필과 PC 연락처 메모는 서로 분리되고 휴대폰 주소록과 동기화하지 않습니다.
-- Android 앱은 6자리 코드를 입력하면 같은 Wi‑Fi의 PC를 자동으로 찾아 연결합니다.
-- 사내 Wi‑Fi의 기기 간 통신 차단(AP isolation)과 Windows 방화벽 정책을 온보딩에서 확인해야 합니다.
+자세한 절차는 [설치·사용 가이드](docs/INSTALL_GUIDE_KO.md), 제한사항은 [알려진 이슈](docs/KNOWN_ISSUES_KO.md)를 확인하세요.

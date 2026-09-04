@@ -3,77 +3,43 @@ using System.Text.RegularExpressions;
 
 namespace PhoneBackup.Desktop.Services;
 
-public sealed record SmartSwitchSourceFile(
-    string FullPath,
-    string RelativePath,
-    string OriginalFileName,
-    string Category,
-    long SizeBytes,
-    DateTimeOffset LastModifiedAt);
+public sealed record SmartSwitchSourceFile(string FullPath, string RelativePath, string OriginalFileName,
+    string Category, long SizeBytes, DateTimeOffset LastModifiedAt);
 
-/// <summary>
-/// Converts the many Smart Switch folder layouts into stable, phone-relative
-/// paths. It intentionally ignores Samsung's private database containers and
-/// only indexes ordinary files that can be verified byte-for-byte.
-/// </summary>
+/// <summary>Smart Switch 원본을 변경하지 않고 모든 파일을 분류한다.</summary>
 public static class SmartSwitchFileClassifier
 {
-    private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".m4a", ".amr", ".3ga", ".3gp", ".wav", ".mp3", ".aac", ".ogg", ".flac",
-        ".jpg", ".jpeg", ".png", ".gif", ".heic", ".webp", ".bmp",
-        ".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv",
-        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-        ".hwp", ".hwpx", ".cell", ".show", ".txt", ".csv", ".rtf", ".zip"
-    };
-
-    private static readonly HashSet<string> PrivateFolders = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "AccountsIcons", "CATEGORY_ICON", "CONTACT", "CONTACTSETTING", "MESSAGE", "MESSAGESETTING",
-        "CALLLOG", "CALLOGSETTING", "OtgBackupTemp", "APPLICATION", "APPSETTING"
-    };
-
+    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+        { ".jpg", ".jpeg", ".png", ".gif", ".heic", ".webp", ".bmp", ".tif", ".tiff" };
+    private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
+        { ".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv", ".m4v" };
+    private static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
+        { ".m4a", ".amr", ".3ga", ".3gp", ".wav", ".mp3", ".aac", ".ogg", ".flac" };
+    private static readonly HashSet<string> DocumentExtensions = new(StringComparer.OrdinalIgnoreCase)
+        { ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".hwp", ".hwpx", ".cell", ".show", ".txt", ".csv", ".rtf", ".epub" };
+    private static readonly HashSet<string> ArchiveExtensions = new(StringComparer.OrdinalIgnoreCase)
+        { ".zip", ".7z", ".rar", ".tar", ".gz" };
+    private static readonly HashSet<string> SamsungExtensions = new(StringComparer.OrdinalIgnoreCase)
+        { ".spbm", ".bk", ".enc", ".dat", ".db", ".sqlite", ".json" };
+    private static readonly HashSet<string> SamsungFolders = new(StringComparer.OrdinalIgnoreCase)
+        { "CONTACT", "CONTACTSETTING", "MESSAGE", "MESSAGESETTING", "CALLLOG", "CALLOGSETTING", "APPLICATION", "APPSETTING", "OtgBackupTemp" };
     private static readonly HashSet<string> CallRecordingFolders = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "TPhoneCallRecords", "CallRecord", "CallRecords", "CallRecording", "CallRecordings", "callar"
-    };
-
-    private static readonly HashSet<string> UserFileContainers = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Music", "PHOTO", "PHOTOS", "VIDEO", "VIDEOS", "DOCUMENT", "DOCUMENTS", "ETCFOLDER",
-        "DCIM", "Pictures", "Movies", "Download", "Downloads", "KakaoTalkDownload", "KakaoTalk",
-        "TPhone", "Recordings", "Recorder", "callar"
-    };
-
-    private static readonly Dictionary<string, string> MobileRootNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["DCIM"] = "DCIM",
-        ["Pictures"] = "Pictures",
-        ["Movies"] = "Movies",
-        ["Music"] = "Music",
-        ["Documents"] = "Documents",
-        ["Download"] = "Download",
-        ["Downloads"] = "Download",
-        ["KakaoTalkDownload"] = "KakaoTalkDownload",
-        ["KakaoTalk"] = "KakaoTalk",
-        ["TPhone"] = "TPhone",
-        ["Recordings"] = "Recordings",
-        ["Recorder"] = "Recorder",
-        ["callar"] = "callar"
-    };
+        { "TPhoneCallRecords", "CallRecord", "CallRecords", "CallRecording", "CallRecordings", "callar" };
 
     public static IReadOnlyList<SmartSwitchSourceFile> Enumerate(string sourceRoot)
     {
         if (!Directory.Exists(sourceRoot)) return Array.Empty<SmartSwitchSourceFile>();
+        var root = Path.GetFullPath(sourceRoot).TrimEnd(Path.DirectorySeparatorChar);
         var result = new List<SmartSwitchSourceFile>();
-        foreach (var path in SafeEnumerateFiles(sourceRoot))
+        foreach (var path in SafeEnumerateFiles(root))
         {
-            if (!TryClassify(sourceRoot, path, out var relativePath, out var category)) continue;
             try
             {
-                var file = new FileInfo(path);
-                result.Add(new SmartSwitchSourceFile(file.FullName, relativePath, file.Name, category,
-                    file.Length, new DateTimeOffset(file.LastWriteTimeUtc)));
+                var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
+                if (relative.StartsWith("../", StringComparison.Ordinal) || ShouldIgnore(relative)) continue;
+                var info = new FileInfo(path);
+                result.Add(new SmartSwitchSourceFile(info.FullName, relative, info.Name,
+                    Classify(relative, info.Name), info.Length, new DateTimeOffset(info.LastWriteTimeUtc)));
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
@@ -85,32 +51,17 @@ public static class SmartSwitchFileClassifier
     {
         relativePath = string.Empty;
         category = string.Empty;
-        if (!Path.GetFullPath(path).StartsWith(Path.GetFullPath(sourceRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
-                StringComparison.OrdinalIgnoreCase)) return false;
-
-        var rawRelative = Path.GetRelativePath(sourceRoot, path).Replace('\\', '/');
-        var segments = rawRelative.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length == 0 || segments.Any(segment => PrivateFolders.Contains(segment))) return false;
-
-        var extension = Path.GetExtension(path);
-        if (!SupportedExtensions.Contains(extension)) return false;
-
-        var fileName = Path.GetFileName(path);
-        var isCallRecording = IsCallRecording(segments, fileName, extension);
-        if (!isCallRecording && !segments.Any(segment => UserFileContainers.Contains(segment))) return false;
-        category = isCallRecording ? "recording" : extension.ToLowerInvariant() switch
-        {
-            ".jpg" or ".jpeg" or ".png" or ".gif" or ".heic" or ".webp" or ".bmp" => "image",
-            ".mp4" or ".mov" or ".avi" or ".mkv" or ".webm" or ".wmv" => "video",
-            ".m4a" or ".amr" or ".3ga" or ".3gp" or ".wav" or ".mp3" or ".aac" or ".ogg" or ".flac" => "audio",
-            ".pdf" or ".doc" or ".docx" or ".xls" or ".xlsx" or ".ppt" or ".pptx" or
-                ".hwp" or ".hwpx" or ".cell" or ".show" or ".txt" or ".csv" or ".rtf" or ".zip" => "document",
-            _ => string.Empty
-        };
-        if (category.Length == 0) return false;
-
-        relativePath = NormalizeMobileRelativePath(segments, isCallRecording);
-        return relativePath.Length > 0;
+        if (!File.Exists(path)) return false;
+        var root = Path.GetFullPath(sourceRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var full = Path.GetFullPath(path);
+        if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return false;
+        var raw = Path.GetRelativePath(sourceRoot, path).Replace('\\', '/');
+        if (ShouldIgnore(raw)) return false;
+        var segments = raw.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var recording = IsCallRecording(segments, Path.GetFileName(path), Path.GetExtension(path));
+        relativePath = NormalizeMobileRelativePath(segments, recording);
+        category = recording ? "recording" : Classify(raw, Path.GetFileName(path));
+        return true;
     }
 
     public static string FindModel(string sourceRoot)
@@ -118,7 +69,6 @@ public static class SmartSwitchFileClassifier
         var fromPath = ExtractModel(sourceRoot.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar,
             StringSplitOptions.RemoveEmptyEntries));
         if (fromPath is not null) return fromPath;
-
         foreach (var directory in SafeEnumerateDirectories(sourceRoot))
         {
             var model = ExtractModel(new[] { Path.GetFileName(directory) });
@@ -137,72 +87,62 @@ public static class SmartSwitchFileClassifier
         return null;
     }
 
+    private static string Classify(string relativePath, string fileName)
+    {
+        var segments = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var extension = Path.GetExtension(fileName);
+        if (IsCallRecording(segments, fileName, extension)) return "recording";
+        if (ImageExtensions.Contains(extension)) return "image";
+        if (VideoExtensions.Contains(extension)) return "video";
+        if (AudioExtensions.Contains(extension)) return "audio";
+        if (DocumentExtensions.Contains(extension)) return "document";
+        if (ArchiveExtensions.Contains(extension)) return "archive";
+        if (SamsungExtensions.Contains(extension) || segments.Any(SamsungFolders.Contains)) return "samsung";
+        if (extension.Equals(".apk", StringComparison.OrdinalIgnoreCase)) return "app";
+        return "other";
+    }
+
     private static bool IsCallRecording(IReadOnlyCollection<string> segments, string fileName, string extension)
     {
-        if (!extension.Equals(".m4a", StringComparison.OrdinalIgnoreCase) &&
-            !extension.Equals(".amr", StringComparison.OrdinalIgnoreCase) &&
-            !extension.Equals(".3ga", StringComparison.OrdinalIgnoreCase) &&
-            !extension.Equals(".wav", StringComparison.OrdinalIgnoreCase)) return false;
-        if (segments.Any(segment => CallRecordingFolders.Contains(segment))) return true;
-
+        if (!AudioExtensions.Contains(extension)) return false;
+        if (segments.Any(CallRecordingFolders.Contains)) return true;
         var stem = Path.GetFileNameWithoutExtension(fileName);
         return Regex.IsMatch(stem, @"_(?:\+?82|0)[0-9\- ]{8,16}_20\d{12}$", RegexOptions.IgnoreCase) ||
                Regex.IsMatch(stem, @"^(?:\+?82|0)[0-9\- ]{8,16}_20\d{12}$", RegexOptions.IgnoreCase);
     }
 
-    private static string NormalizeMobileRelativePath(string[] segments, bool isCallRecording)
+    private static string NormalizeMobileRelativePath(string[] segments, bool isRecording)
     {
-        if (isCallRecording)
-        {
-            var callIndex = Array.FindIndex(segments, segment => CallRecordingFolders.Contains(segment));
-            if (callIndex >= 0)
-            {
-                var recordingsIndex = callIndex > 0
-                    ? Array.FindLastIndex(segments, callIndex - 1,
-                        segment => segment.Equals("Recordings", StringComparison.OrdinalIgnoreCase))
-                    : -1;
-                if (recordingsIndex >= 0) return string.Join('/', segments[recordingsIndex..]);
-                var tPhoneIndex = callIndex > 0
-                    ? Array.FindLastIndex(segments, callIndex - 1,
-                        segment => segment.Equals("TPhone", StringComparison.OrdinalIgnoreCase))
-                    : -1;
-                if (tPhoneIndex >= 0) return string.Join('/', segments[tPhoneIndex..]);
-                if (segments[callIndex].Equals("TPhoneCallRecords", StringComparison.OrdinalIgnoreCase))
-                    return string.Join('/', new[] { "Music" }.Concat(segments[callIndex..]));
-                return string.Join('/', segments[callIndex..]);
-            }
-        }
+        if (!isRecording) return string.Join('/', segments);
+        var callIndex = Array.FindIndex(segments, CallRecordingFolders.Contains);
+        if (callIndex < 0) return string.Join('/', segments);
+        var recordingsIndex = callIndex > 0
+            ? Array.FindLastIndex(segments, callIndex - 1, segment => segment.Equals("Recordings", StringComparison.OrdinalIgnoreCase)) : -1;
+        if (recordingsIndex >= 0) return string.Join('/', segments[recordingsIndex..]);
+        var tPhoneIndex = callIndex > 0
+            ? Array.FindLastIndex(segments, callIndex - 1, segment => segment.Equals("TPhone", StringComparison.OrdinalIgnoreCase)) : -1;
+        if (tPhoneIndex >= 0) return string.Join('/', segments[tPhoneIndex..]);
+        if (segments[callIndex].Equals("TPhoneCallRecords", StringComparison.OrdinalIgnoreCase))
+            return string.Join('/', new[] { "Music" }.Concat(segments[callIndex..]));
+        return string.Join('/', segments[callIndex..]);
+    }
 
-        for (var index = 0; index < segments.Length; index++)
-        {
-            if (!MobileRootNames.TryGetValue(segments[index], out var canonical)) continue;
-            var normalized = segments[index..].ToArray();
-            normalized[0] = canonical;
-            return string.Join('/', normalized);
-        }
-
-        var modelIndex = Array.FindIndex(segments,
-            segment => ExtractModel(new[] { segment }) is not null);
-        var start = modelIndex >= 0 && modelIndex + 1 < segments.Length ? modelIndex + 1 : 0;
-        return string.Join('/', segments[start..]);
+    private static bool ShouldIgnore(string relativePath)
+    {
+        var parts = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Any(part => part.StartsWith('.') || part.Equals("Thumbs.db", StringComparison.OrdinalIgnoreCase)) ||
+               parts.LastOrDefault()?.StartsWith(".thumbdata", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     private static IEnumerable<string> SafeEnumerateFiles(string root)
     {
-        var pending = new Stack<string>();
-        pending.Push(root);
+        var pending = new Stack<string>(); pending.Push(root);
         while (pending.Count > 0)
         {
             var current = pending.Pop();
-            IEnumerable<string> files;
-            IEnumerable<string> directories;
-            try
-            {
-                files = Directory.EnumerateFiles(current).ToArray();
-                directories = Directory.EnumerateDirectories(current).ToArray();
-            }
-            catch (IOException) { continue; }
-            catch (UnauthorizedAccessException) { continue; }
+            string[] files; string[] directories;
+            try { files = Directory.GetFiles(current); directories = Directory.GetDirectories(current); }
+            catch (IOException) { continue; } catch (UnauthorizedAccessException) { continue; }
             foreach (var file in files) yield return file;
             foreach (var directory in directories) pending.Push(directory);
         }
@@ -210,20 +150,13 @@ public static class SmartSwitchFileClassifier
 
     private static IEnumerable<string> SafeEnumerateDirectories(string root)
     {
-        var pending = new Stack<string>();
-        pending.Push(root);
+        var pending = new Stack<string>(); pending.Push(root);
         while (pending.Count > 0)
         {
-            var current = pending.Pop();
-            string[] directories;
+            var current = pending.Pop(); string[] directories;
             try { directories = Directory.GetDirectories(current); }
-            catch (IOException) { continue; }
-            catch (UnauthorizedAccessException) { continue; }
-            foreach (var directory in directories)
-            {
-                yield return directory;
-                pending.Push(directory);
-            }
+            catch (IOException) { continue; } catch (UnauthorizedAccessException) { continue; }
+            foreach (var directory in directories) { yield return directory; pending.Push(directory); }
         }
     }
 }

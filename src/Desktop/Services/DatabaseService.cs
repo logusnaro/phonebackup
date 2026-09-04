@@ -113,6 +113,21 @@ public sealed class DatabaseService : IDisposable
                   subject_id TEXT, details_json TEXT, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS app_settings(
                   key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS managed_sources(
+                  id TEXT PRIMARY KEY, root_path TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
+                  model TEXT NOT NULL, created_at TEXT NOT NULL, last_scan_at TEXT,
+                  files_count INTEGER NOT NULL DEFAULT 0, total_bytes INTEGER NOT NULL DEFAULT 0,
+                  status INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS managed_files(
+                  id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES managed_sources(id) ON DELETE CASCADE,
+                  relative_path TEXT NOT NULL, full_path TEXT NOT NULL, original_file_name TEXT NOT NULL,
+                  category TEXT NOT NULL, size_bytes INTEGER NOT NULL, last_modified_at TEXT NOT NULL,
+                  recorded_at TEXT, parsed_phone_number TEXT, parsed_contact_name TEXT,
+                  parsed_target TEXT, parsed_affiliation TEXT, sha256 TEXT, verified_at TEXT,
+                  state INTEGER NOT NULL DEFAULT 0, last_indexed_at TEXT NOT NULL,
+                  UNIQUE(source_id, relative_path));
+                CREATE INDEX IF NOT EXISTS ix_managed_files_category ON managed_files(category,state);
+                CREATE INDEX IF NOT EXISTS ix_managed_files_recorded ON managed_files(recorded_at);
                 """;
             await command.ExecuteNonQueryAsync();
             await using var categoryFix = connection.CreateCommand();

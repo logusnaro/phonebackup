@@ -34,10 +34,10 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += (_, args) => LogCrash("AppDomain.UnhandledException", args.ExceptionObject as Exception);
         TaskScheduler.UnobservedTaskException += (_, args) => { LogCrash("UnobservedTaskException", args.Exception); args.SetObserved(); };
         var created = false;
-        _instanceMutex = new Mutex(true, "Local\\PhoneBackup.SingleInstance", out created);
+        _instanceMutex = new Mutex(true, "Local\\PhoneBackup.Manager.V2.SingleInstance", out created);
         if (!created)
         {
-            MessageBox.Show("PhoneBackup가 이미 실행 중입니다. 기존 창을 사용하세요.", "업무폰 백업", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show("PB 파일 관리가 이미 실행 중입니다. 기존 창을 사용하세요.", "PB", MessageBoxButton.OK, MessageBoxImage.Information);
             Shutdown(0);
             return;
         }
@@ -48,8 +48,7 @@ public partial class App : Application
             LogStartup($"data root: {dataRoot}");
             Services = new AppServices(dataRoot);
             LogStartup("services constructed");
-            // Keep database/Kestrel startup off the WPF dispatcher so a slow
-            // socket or SQLite initialization can never block window creation.
+            // SQLite 초기화가 화면 스레드를 막지 않도록 백그라운드에서 시작한다.
             await Task.Run(() => Services.StartAsync());
             LogStartup("services started");
             var window = new MainWindow();

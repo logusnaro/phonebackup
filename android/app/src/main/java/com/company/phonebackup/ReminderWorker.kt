@@ -1,11 +1,14 @@
 package com.company.phonebackup
 
+import android.Manifest
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.Worker
@@ -23,8 +26,7 @@ class ReminderWorker(context: Context, params: WorkerParameters) : Worker(contex
             })
         }
         val intent = Intent(applicationContext, MainActivity::class.java)
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val pending = PendingIntent.getActivity(applicationContext, 401, intent, flags)
         val notification = NotificationCompat.Builder(applicationContext, channelId)
             .setSmallIcon(R.drawable.ic_phonebackup)
@@ -34,7 +36,14 @@ class ReminderWorker(context: Context, params: WorkerParameters) : Worker(contex
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
-        runCatching { NotificationManagerCompat.from(applicationContext).notify(401, notification) }
+        val notificationsAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                applicationContext,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        if (notificationsAllowed) {
+            runCatching { NotificationManagerCompat.from(applicationContext).notify(401, notification) }
+        }
         return Result.success()
     }
 

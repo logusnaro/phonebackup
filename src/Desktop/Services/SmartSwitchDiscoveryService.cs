@@ -47,7 +47,10 @@ public sealed class SmartSwitchDiscoveryService
         var prior = await _database.QueryAsync(
             "SELECT DISTINCT source_path FROM smart_switch_backups ORDER BY started_at DESC",
             r => r.GetString(0));
-        var seeds = BuildDefaultSeeds().Concat(prior).Concat(ReadSamsungConfiguredPaths())
+        var managed = await _database.QueryAsync(
+            "SELECT root_path FROM managed_sources ORDER BY last_scan_at DESC",
+            r => r.GetString(0));
+        var seeds = BuildDefaultSeeds().Concat(prior).Concat(managed).Concat(ReadSamsungConfiguredPaths())
             .Where(Directory.Exists)
             .Select(Path.GetFullPath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -227,9 +230,11 @@ public sealed class SmartSwitchDiscoveryService
             Path.Combine(documents, "Samsung", "SmartSwitch", "backup"),
             Path.Combine(documents, "Samsung", "SmartSwitch"),
             Path.Combine(profile, "Documents", "Samsung", "SmartSwitch", "backup"),
+            Path.Combine(profile, "Downloads"),
             documents,
             desktop,
-            commonDocuments
+            commonDocuments,
+            profile
         };
         roots.AddRange(Environment.GetEnvironmentVariables().Keys.Cast<object>()
             .Select(key => key.ToString())

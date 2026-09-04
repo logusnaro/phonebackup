@@ -1,98 +1,150 @@
 package com.company.phonebackup
 
+import android.app.PendingIntent
+import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
-import android.provider.DocumentsContract
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.documentfile.provider.DocumentFile
 import java.io.File
-import java.io.FileInputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+data class MobileFile(
+    val uri: Uri,
+    val name: String,
+    val relativePath: String,
+    val category: String,
+    val sizeBytes: Long,
+    val modifiedAtMillis: Long,
+    val isCallRecording: Boolean,
+    val canDeleteDirectly: Boolean
+) {
+    val stableKey: String get() = "$relativePath|$sizeBytes|$modifiedAtMillis"
+    val dateText: String get() = SimpleDateFormat("yyyy-MM-dd", Locale.KOREA).format(Date(modifiedAtMillis))
+}
 
 class FileRepository(private val context: Context) {
-    private val backupExtensions = setOf(
-        "m4a", "amr", "3gp", "wav", "mp3", "aac", "ogg", "flac",
-        "jpg", "jpeg", "png", "heic", "gif", "webp", "bmp",
-        "mp4", "mov", "avi", "mkv", "wmv",
-        "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-        "hwp", "hwpx", "cell", "show", "txt", "csv", "rtf", "zip"
-    )
-    private fun shouldSkip(path: String): Boolean {
-        val parts = path.replace('\\', '/').split('/')
-        return parts.any { it.startsWith(".") || it.equals("cache", true) } ||
-            parts.lastOrNull()?.startsWith(".thumbdata", true) == true
+    private val audio = setOf("m4a", "amr", "3ga", "3gp", "wav", "mp3", "aac", "ogg", "flac")
+    private val images = setOf("jpg", "jpeg", "png", "heic", "gif", "webp", "bmp")
+    private val videos = setOf("mp4", "mov", "avi", "mkv", "webm", "wmv", "m4v")
+    private val documents = setOf("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "hwp", "hwpx", "txt", "csv", "zip")
+    private val callFolders = setOf("tphonecallrecords", "callrecord", "callrecords", "callrecording", "callrecordings", "callar")
+
+    fun scan(selectedTrees: Set<String>): List<MobileFile> {
+        val result = linkedMapOf<String, MobileFile>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) scanMediaStore(result)
+        else scanLegacyStorage(result)
+        selectedTrees.forEach { value -> runCatching { scanTree(Uri.parse(value), result) } }
+        return result.values.sortedByDescending { it.modifiedAtMillis }
     }
-    fun listFiles(treeUri: Uri): List<Pair<Uri, String>> {
-        val root = DocumentFile.fromTreeUri(context, treeUri) ?: return emptyList(); val result = mutableListOf<Pair<Uri, String>>()
-        fun walk(node: DocumentFile, prefix: String) { node.listFiles().forEach { child -> val path = if (prefix.isEmpty()) child.name.orEmpty() else "$prefix/${child.name.orEmpty()}"; if (!shouldSkip(path)) { if (child.isDirectory) walk(child, path) else if (child.isFile) result.add(child.uri to path) } } }
-        walk(root, ""); return result
+
+    private fun scanMediaStore(result: MutableMap<String, MobileFile>) {
+        val collection = MediaStore.Files.getContentUri("external")
+        val projection = arrayOf(
+            MediaStore.Files.FileColumns._ID,
+            MediaStore.Files.FileColumns.DISPLAY_NAME,
+            MediaStore.Files.FileColumns.SIZE,
+            MediaStore.Files.FileColumns.DATE_MODIFIED,
+            MediaStore.Files.FileColumns.MIME_TYPE,
+            MediaStore.Files.FileColumns.RELATIVE_PATH
+        )
+        context.contentResolver.query(collection, projection, null, null,
+            "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC")?.use { cursor ->
+            val idIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+            val nameIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
+            val sizeIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
+            val dateIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
+            val pathIndex = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.RELATIVE_PATH)
+            while (cursor.moveToNext()) {
+                val name = cursor.getString(nameIndex) ?: continue
+                val folder = cursor.getString(pathIndex).orEmpty().trim('/')
+                val relative = if (folder.isBlank()) name else "$folder/$name"
+                val item = makeItem(ContentUris.withAppendedId(collection, cursor.getLong(idIndex)), name,
+                    relative, cursor.getLong(sizeIndex), cursor.getLong(dateIndex) * 1000L, false)
+                if (item.category != "other" || item.isCallRecording) result[item.stableKey] = item
+            }
+        }
     }
-    fun listDefaultFiles(deviceId: String): List<Pair<Uri, String>> {
-        val storage = android.os.Environment.getExternalStorageDirectory()
-        val result = mutableListOf<Pair<Uri, String>>()
-        val visitedDirectories = mutableSetOf<String>()
-        fun walk(node: File, prefix: String) {
-            if (!visitedDirectories.add(node.absolutePath)) return
-            node.listFiles()?.forEach { child ->
-                val path = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
-                if (!shouldSkip(path)) {
-                    if (child.isDirectory) walk(child, path)
-                    else if (child.isFile && child.canRead() && child.extension.lowercase() in backupExtensions)
-                        result.add(Uri.fromFile(child) to path)
+
+    private fun scanLegacyStorage(result: MutableMap<String, MobileFile>) {
+        val root = Environment.getExternalStorageDirectory()
+        val roots = listOf("Music", "TPhone", "Recordings", "callar", "DCIM", "Pictures", "Movies", "Documents", "Download", "KakaoTalkDownload", "KakaoTalk")
+        roots.map { File(root, it) }.filter { it.isDirectory }.forEach { directory ->
+            walkFile(directory, directory.name, result)
+        }
+    }
+
+    private fun walkFile(directory: File, prefix: String, result: MutableMap<String, MobileFile>) {
+        directory.listFiles()?.forEach { child ->
+            if (child.name.startsWith('.') || child.name.equals("cache", true)) return@forEach
+            val relative = "$prefix/${child.name}"
+            if (child.isDirectory) walkFile(child, relative, result)
+            else if (child.isFile && child.canRead()) {
+                val item = makeItem(Uri.fromFile(child), child.name, relative, child.length(), child.lastModified(), true)
+                result[item.stableKey] = item
+            }
+        }
+    }
+
+    private fun scanTree(treeUri: Uri, result: MutableMap<String, MobileFile>) {
+        val root = DocumentFile.fromTreeUri(context, treeUri) ?: return
+        var visited = 0
+        fun walk(node: DocumentFile, prefix: String) {
+            if (visited++ > 50_000) return
+            node.listFiles().forEach { child ->
+                val name = child.name.orEmpty()
+                if (name.startsWith('.')) return@forEach
+                val relative = if (prefix.isBlank()) name else "$prefix/$name"
+                if (child.isDirectory) walk(child, relative)
+                else if (child.isFile) {
+                    val item = makeItem(child.uri, name, relative, child.length(), child.lastModified(), true)
+                    result[item.stableKey] = item
                 }
             }
         }
-        val profiles = context.getSharedPreferences("backup_profiles", Context.MODE_PRIVATE)
-        val key = "roots_$deviceId"
-        val savedRoots = profiles.getStringSet(key, null)?.toSet().orEmpty()
-        val candidateRoots = if (savedRoots.isNotEmpty()) {
-            savedRoots.map { File(storage, it) }.filter { it.isDirectory }
-        } else {
-            storage.listFiles()?.filter {
-                it.isDirectory && !it.name.startsWith(".") &&
-                    !it.name.equals("Android", true) && !it.name.equals("LOST.DIR", true)
-            }.orEmpty()
+        walk(root, root.name.orEmpty())
+    }
+
+    private fun makeItem(uri: Uri, name: String, relative: String, size: Long, modified: Long, direct: Boolean): MobileFile {
+        val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val pathParts = relative.replace('\\', '/').split('/').map { it.lowercase(Locale.ROOT) }
+        val stem = name.substringBeforeLast('.')
+        val recording = ext in audio && (pathParts.any { it in callFolders } ||
+            Regex("(?:^|_)(?:\\+?82|0)[0-9\\- ]{8,16}_20\\d{12}$").containsMatchIn(stem))
+        val category = when {
+            recording -> "recording"
+            ext in images -> "image"
+            ext in videos -> "video"
+            ext in audio -> "audio"
+            ext in documents -> "document"
+            else -> "other"
         }
-        val discoveredRoots = mutableSetOf<String>()
-        candidateRoots.forEach {
-            val before = result.size
-            walk(it, it.name)
-            if (result.size > before) discoveredRoots.add(it.name)
+        return MobileFile(uri, name, relative, category, size.coerceAtLeast(0), modified.coerceAtLeast(0), recording, direct)
+    }
+
+    fun deleteDirect(items: Collection<MobileFile>): Pair<Int, Int> {
+        var deleted = 0; var failed = 0
+        items.forEach { item ->
+            val success = runCatching {
+                when (item.uri.scheme) {
+                    "file" -> File(item.uri.path ?: return@runCatching false).delete()
+                    else -> DocumentFile.fromSingleUri(context, item.uri)?.delete() == true ||
+                        context.contentResolver.delete(item.uri, null, null) > 0
+                }
+            }.getOrDefault(false)
+            if (success) deleted++ else failed++
         }
-        if (savedRoots.isEmpty()) profiles.edit().putStringSet(key, discoveredRoots).apply()
-        storage.listFiles()?.filter { it.isFile && it.canRead() && it.extension.lowercase() in backupExtensions }
-            ?.forEach { result.add(Uri.fromFile(it) to it.name) }
-        return result
+        return deleted to failed
     }
 
-    fun clearSavedProfile(deviceId: String) {
-        context.getSharedPreferences("backup_profiles", Context.MODE_PRIVATE)
-            .edit().remove("roots_$deviceId").apply()
-    }
-
-    fun sizeOf(uri: Uri): Long {
-        if (uri.scheme == "file") return File(uri.path ?: return 0L).length()
-        return DocumentFile.fromSingleUri(context, uri)?.length() ?: 0L
-    }
-
-    fun deleteIfMatches(uri: Uri, expectedSha256: String): Boolean {
-        val temp = copyToTemp(uri)
-        return try {
-            val digest = java.security.MessageDigest.getInstance("SHA-256")
-            temp.inputStream().use { input ->
-                val buffer = ByteArray(1024 * 1024)
-                var read: Int
-                while (input.read(buffer).also { read = it } > 0) digest.update(buffer, 0, read)
-            }
-            val actual = digest.digest().joinToString("") { "%02X".format(it) }
-            if (!actual.equals(expectedSha256, ignoreCase = true)) return false
-            if (uri.scheme == "file") File(uri.path ?: return false).delete()
-            else DocumentFile.fromSingleUri(context, uri)?.delete() == true
-        } finally { temp.delete() }
-    }
-
-    fun copyToTemp(uri: Uri): File {
-        val file = File.createTempFile("phonebackup-", ".upload", context.cacheDir)
-        val input = if (uri.scheme == "file") FileInputStream(uri.path!!) else context.contentResolver.openInputStream(uri)!!
-        input.use { source -> file.outputStream().use { output -> source.copyTo(output) } }
-        return file
+    fun createSystemDeleteRequest(items: Collection<MobileFile>): PendingIntent? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        val uris = items.map { it.uri }.filter { it.scheme == "content" }
+        if (uris.isEmpty()) return null
+        return MediaStore.createDeleteRequest(context.contentResolver, uris)
     }
 }

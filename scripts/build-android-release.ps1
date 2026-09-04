@@ -13,7 +13,7 @@ if ([string]::IsNullOrWhiteSpace($env:PB_KEYSTORE_PASSWORD) -or [string]::IsNull
 $env:PB_KEYSTORE_PATH = (Resolve-Path $keystore).Path
 $gradle = Join-Path $root '.tools\gradle\bin\gradle.bat'
 $apkSource = Join-Path $root 'android\app\build\outputs\apk\release\app-release.apk'
-$apkTarget = Join-Path $root 'artifacts\PhoneBackupAndroid-release-v1.6.0.apk'
+$apkTarget = Join-Path $root 'artifacts\PhoneBackupAndroid-release-v2.0.0.apk'
 Push-Location (Join-Path $root 'android')
 try { & $gradle assembleRelease --no-daemon --offline --console=plain -x lintVitalAnalyzeRelease -x lintVitalReportRelease -x lintVitalRelease } finally { Pop-Location }
 if ($LASTEXITCODE -ne 0) { throw "Android Release 빌드 실패 (exit $LASTEXITCODE)" }

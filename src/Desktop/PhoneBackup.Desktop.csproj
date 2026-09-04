@@ -6,9 +6,9 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>PhoneBackup</AssemblyName>
     <RootNamespace>PhoneBackup.Desktop</RootNamespace>
-    <Version>1.6.0</Version>
-    <AssemblyVersion>1.6.0.0</AssemblyVersion>
-    <FileVersion>1.6.0.0</FileVersion>
+    <Version>2.0.0</Version>
+    <AssemblyVersion>2.0.0.0</AssemblyVersion>
+    <FileVersion>2.0.0.0</FileVersion>
     <ApplicationIcon>Assets\phonebackup.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
@@ -16,8 +16,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets\phonebackup.ico" />
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
-    <PackageReference Include="QRCoder" Version="1.6.0" />
   </ItemGroup>
 </Project>
