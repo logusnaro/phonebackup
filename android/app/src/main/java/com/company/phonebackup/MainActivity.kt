@@ -74,9 +74,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Thread.setDefaultUncaughtExceptionHandler { _, error ->
+        val systemExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             runCatching { FileLogger.append(this, "fatal", error) }
-            android.os.Process.killProcess(android.os.Process.myPid())
+            if (systemExceptionHandler != null) {
+                systemExceptionHandler.uncaughtException(thread, error)
+            } else {
+                android.os.Process.killProcess(android.os.Process.myPid())
+            }
         }
         authorizationUntil = prefs.getLong("authorization_until", 0L)
         snapshotCreatedAt = prefs.getLong("snapshot_created_at", 0L)
@@ -212,9 +217,22 @@ class MainActivity : ComponentActivity() {
 
     private fun launchNextDeleteBatch() {
         val batch = pendingDeleteBatches.removeFirstOrNull() ?: return
-        val request = repository.createSystemDeleteRequest(batch) ?: return
-        currentDeleteBatchSize = batch.size
-        systemDeleteLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+        runCatching {
+            repository.createSystemDeleteRequest(batch)
+                ?: error("Android 삭제 승인 요청을 만들지 못했습니다.")
+        }.onSuccess { request ->
+            runCatching {
+                currentDeleteBatchSize = batch.size
+                systemDeleteLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+            }.onFailure(::handleDeleteRequestFailure)
+        }.onFailure(::handleDeleteRequestFailure)
+    }
+
+    private fun handleDeleteRequestFailure(error: Throwable) {
+        FileLogger.append(this, "delete-request", error)
+        pendingDeleteBatches.clear()
+        currentDeleteBatchSize = 0
+        scanMessage = "삭제 요청에 실패했습니다: ${error.javaClass.simpleName}"
     }
 
     private fun openSmartSwitch(): Boolean {
@@ -462,7 +480,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private object FileLogger {
-    fun append(context: android.content.Context, stage: String, error: Throwable) { runCatching { java.io.File(context.filesDir, "phonebackup.log").appendText("${System.currentTimeMillis()} [$stage] ${error.javaClass.simpleName}: ${error.message}\n") } }
+    fun append(context: android.content.Context, stage: String, error: Throwable) { runCatching { java.io.File(context.filesDir, "phonebackup.log").appendText("${System.currentTimeMillis()} [$stage] ${error.stackTraceToString()}\n") } }
     fun read(context: android.content.Context): String? = runCatching { java.io.File(context.filesDir, "phonebackup.log").takeIf { it.exists() }?.readText() }.getOrNull()
 }
 
