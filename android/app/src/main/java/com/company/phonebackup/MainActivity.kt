@@ -164,9 +164,21 @@ class MainActivity : ComponentActivity() {
         return oldEnoughWhenRecording && prefs.getStringSet("snapshot_keys", emptySet())?.contains(file.stableKey.sha256()) == true
     }
 
-    private fun startDelete(items: List<MobileFile>, onComplete: (String) -> Unit) {
-        val eligible = items.filter(::isDeletionEligible)
-        if (eligible.isEmpty()) { onComplete("삭제 가능한 파일이 없습니다. 백업 확인 상태를 점검하세요."); return }
+    private fun startDelete(
+        items: List<MobileFile>,
+        enforceBackupGate: Boolean = true,
+        onComplete: (String) -> Unit
+    ) {
+        val eligible = if (enforceBackupGate) {
+            items.filter(::isDeletionEligible)
+        } else {
+            // 백업 확인 우회는 '파일 정리'의 일반 파일에만 허용한다.
+            items.filterNot { it.isCallRecording }
+        }
+        if (eligible.isEmpty()) {
+            onComplete(if (enforceBackupGate) "삭제 가능한 파일이 없습니다. 백업 확인 상태를 점검하세요." else "삭제할 일반 파일이 없습니다.")
+            return
+        }
         lifecycleScope.launch {
             val direct = eligible.filter { it.canDeleteDirectly || it.uri.scheme == "file" }
             val system = eligible - direct.toSet()
@@ -355,11 +367,24 @@ class MainActivity : ComponentActivity() {
             }
             Row(verticalAlignment = Alignment.CenterVertically) { Checkbox(checked = shown.isNotEmpty() && selected.size == shown.size, onCheckedChange = { selected = if (it) shown.map { file -> file.stableKey }.toSet() else emptySet() }); Text("전체 선택", Modifier.weight(1f)); Text("${shown.size.format()}개 · ${shown.sumOf { it.sizeBytes }.humanSize()}", color = PbMuted) }
             LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) { items(shown, key = { it.stableKey }) { item -> FileRow(item, item.stableKey in selected, { checked -> selected = if (checked) selected + item.stableKey else selected - item.stableKey }, category == "image") } }
-            if (!authorized) Text("백업 완료 확인 전에는 어떤 파일도 삭제할 수 없습니다.", color = Color(0xFF8A5A00), fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp))
+            if (!authorized) Text("백업 미확인 상태에서도 삭제할 수 있지만, 삭제 직전에 다시 확인합니다.", color = Color(0xFF8A5A00), fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp))
             if (message.isNotBlank()) Text(message, color = PbMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp))
-            Button(onClick = { confirmDelete = true }, enabled = authorized && selected.isNotEmpty(), modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = PbDanger)) { Text("선택한 파일 삭제") }
+            Button(onClick = { confirmDelete = true }, enabled = selected.isNotEmpty(), modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = PbDanger)) { Text("선택한 파일 삭제") }
         }
-        if (confirmDelete) DeleteConfirmDialog(selected.size, onDismiss = { confirmDelete = false }, onConfirm = { confirmDelete = false; startDelete(shown.filter { it.stableKey in selected }) { message = it; selected = emptySet() } })
+        if (confirmDelete) {
+            val selectedFiles = shown.filter { it.stableKey in selected }
+            if (authorized) {
+                DeleteConfirmDialog(selected.size, onDismiss = { confirmDelete = false }, onConfirm = {
+                    confirmDelete = false
+                    startDelete(selectedFiles) { message = it; selected = emptySet() }
+                })
+            } else {
+                UnverifiedDeleteConfirmDialog(selected.size, onDismiss = { confirmDelete = false }, onConfirm = {
+                    confirmDelete = false
+                    startDelete(selectedFiles, enforceBackupGate = false) { message = it; selected = emptySet() }
+                })
+            }
+        }
     }
 
     @Composable
@@ -408,6 +433,16 @@ class MainActivity : ComponentActivity() {
 
     @Composable private fun CheckLine(label: String, checked: Boolean, onChange: (Boolean) -> Unit) { Row(Modifier.fillMaxWidth().padding(top = 8.dp).clickable { onChange(!checked) }, verticalAlignment = Alignment.CenterVertically) { Checkbox(checked, onChange); Text(label) } }
     @Composable private fun DeleteConfirmDialog(count: Int, onDismiss: () -> Unit, onConfirm: () -> Unit) { AlertDialog(onDismissRequest = onDismiss, title = { Text("휴대폰에서 영구 삭제") }, text = { Text("선택한 ${count}개 파일을 휴대폰에서 삭제합니다.\n\n휴지통을 지원하지 않는 기기에서는 즉시 영구 삭제될 수 있습니다. Smart Switch 백업을 다시 확인했습니까?") }, confirmButton = { Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = PbDanger)) { Text("삭제") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } }) }
+
+    @Composable private fun UnverifiedDeleteConfirmDialog(count: Int, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("백업 확인 안 됨") },
+            text = { Text("선택한 ${count}개 파일의 백업 여부를 확인하지 못했습니다.\n\n백업이 안 되어 있음에도 삭제하시겠습니까? 삭제한 파일은 복구하지 못할 수 있습니다.") },
+            confirmButton = { Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = PbDanger)) { Text("확인") } },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } }
+        )
+    }
 
     private fun buildDiagnostic(): ByteArray {
         val output = ByteArrayOutputStream()
