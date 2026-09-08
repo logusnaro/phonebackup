@@ -179,11 +179,11 @@ class MainActivity : ComponentActivity() {
         val eligible = if (enforceBackupGate) {
             items.filter(::isDeletionEligible)
         } else {
-            // 백업 확인 우회는 '파일 정리'의 일반 파일에만 허용한다.
-            items.filterNot { it.isCallRecording }
+            // 사용자가 백업 미확인 경고에서 다시 승인한 항목만 우회한다.
+            items
         }
         if (eligible.isEmpty()) {
-            onComplete(if (enforceBackupGate) "삭제 가능한 파일이 없습니다. 백업 확인 상태를 점검하세요." else "삭제할 일반 파일이 없습니다.")
+            onComplete(if (enforceBackupGate) "삭제 가능한 파일이 없습니다. 백업 확인 상태를 점검하세요." else "삭제할 파일이 없습니다.")
             return
         }
         lifecycleScope.launch {
@@ -367,7 +367,7 @@ class MainActivity : ComponentActivity() {
             PbCard(background = if (authorized) PbGreenSoft else Color(0xFFFFF7E8)) {
                 Text("90일 지난 통화녹음", fontSize = 19.sp, fontWeight = FontWeight.Bold)
                 Text("${candidates.size.format()}개 · ${candidates.sumOf { it.sizeBytes }.humanSize()}", color = PbMuted, modifier = Modifier.padding(top = 4.dp))
-                Text(if (authorized) "백업 확인 완료 · 목록에 고정된 파일만 삭제 가능" else "삭제 잠김 · 현황에서 백업 확인을 먼저 완료하세요", color = if (authorized) PbGreenDark else Color(0xFF8A5A00), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+                Text(if (authorized) "백업 확인 완료 · 목록에 고정된 파일만 삭제 가능" else "백업 미확인 상태에서도 경고 확인 후 삭제 가능", color = if (authorized) PbGreenDark else Color(0xFF8A5A00), fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
             }
             Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = candidates.isNotEmpty() && selected.size == candidates.size, onCheckedChange = { checked -> selected = if (checked) candidates.map { it.stableKey }.toSet() else emptySet() })
@@ -377,11 +377,22 @@ class MainActivity : ComponentActivity() {
                 items(candidates, key = { it.stableKey }) { item -> FileRow(item, selected.contains(item.stableKey), { checked -> selected = if (checked) selected + item.stableKey else selected - item.stableKey }, false) }
             }
             if (message.isNotBlank()) Text(message, color = PbMuted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 6.dp))
-            Button(onClick = { confirmDelete = true }, enabled = authorized && selected.isNotEmpty(), modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = PbDanger)) { Text("선택한 통화녹음 삭제") }
+            Button(onClick = { confirmDelete = true }, enabled = selected.isNotEmpty(), modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = PbDanger)) { Text("선택한 통화녹음 삭제") }
         }
-        if (confirmDelete) DeleteConfirmDialog(selected.size, onDismiss = { confirmDelete = false }, onConfirm = {
-            confirmDelete = false; startDelete(candidates.filter { it.stableKey in selected }) { message = it; selected = emptySet() }
-        })
+        if (confirmDelete) {
+            val selectedFiles = candidates.filter { it.stableKey in selected }
+            if (authorized) {
+                DeleteConfirmDialog(selected.size, onDismiss = { confirmDelete = false }, onConfirm = {
+                    confirmDelete = false
+                    startDelete(selectedFiles) { message = it; selected = emptySet() }
+                })
+            } else {
+                UnverifiedDeleteConfirmDialog(selected.size, onDismiss = { confirmDelete = false }, onConfirm = {
+                    confirmDelete = false
+                    startDelete(selectedFiles, enforceBackupGate = false) { message = it; selected = emptySet() }
+                })
+            }
+        }
     }
 
     @Composable
