@@ -63,8 +63,16 @@ class FileRepository(private val context: Context) {
                 val name = cursor.getString(nameIndex) ?: continue
                 val folder = cursor.getString(pathIndex).orEmpty().trim('/')
                 val relative = if (folder.isBlank()) name else "$folder/$name"
-                val item = makeItem(ContentUris.withAppendedId(collection, cursor.getLong(idIndex)), name,
+                val id = cursor.getLong(idIndex)
+                val fileItem = makeItem(ContentUris.withAppendedId(collection, id), name,
                     relative, cursor.getLong(sizeIndex), cursor.getLong(dateIndex) * 1000L, false)
+                val mediaUri = when (fileItem.category) {
+                    "image" -> ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                    "video" -> ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+                    "audio", "recording" -> ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
+                    else -> fileItem.uri
+                }
+                val item = fileItem.copy(uri = mediaUri)
                 if (item.category != "other" || item.isCallRecording) result[item.stableKey] = item
             }
         }
@@ -143,8 +151,11 @@ class FileRepository(private val context: Context) {
 
     fun createSystemDeleteRequest(items: Collection<MobileFile>): PendingIntent? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
-        val uris = items.map { it.uri }.filter { it.scheme == "content" }
+        val uris = items.filter(::supportsSystemDelete).map { it.uri }
         if (uris.isEmpty()) return null
         return MediaStore.createDeleteRequest(context.contentResolver, uris)
     }
+
+    fun supportsSystemDelete(item: MobileFile): Boolean =
+        item.uri.scheme == "content" && item.category in setOf("image", "video", "audio", "recording")
 }

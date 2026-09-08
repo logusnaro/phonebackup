@@ -71,6 +71,8 @@ class MainActivity : ComponentActivity() {
     private val pendingDeleteBatches = ArrayDeque<List<MobileFile>>()
     private var currentDeleteBatchSize = 0
     private var systemDeletedApproved = 0
+    private var deletedBeforeSystemApproval = 0
+    private var failedBeforeSystemApproval = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -186,20 +188,25 @@ class MainActivity : ComponentActivity() {
         }
         lifecycleScope.launch {
             val direct = eligible.filter { it.canDeleteDirectly || it.uri.scheme == "file" }
-            val system = eligible - direct.toSet()
+            val remaining = eligible - direct.toSet()
+            val system = remaining.filter(repository::supportsSystemDelete)
+            val unsupportedCount = remaining.size - system.size
             val directResult = withContext(Dispatchers.IO) { repository.deleteDirect(direct) }
             if (system.isNotEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 pendingDeleteBatches.clear()
                 system.chunked(1500).forEach { pendingDeleteBatches.addLast(it) }
                 if (pendingDeleteBatches.isNotEmpty()) {
                     systemDeletedApproved = 0
+                    deletedBeforeSystemApproval = directResult.first
+                    failedBeforeSystemApproval = directResult.second + unsupportedCount
                     launchNextDeleteBatch()
-                    onComplete("${directResult.first}개 삭제 · 나머지는 Android 확인창에서 승인해 주세요.")
+                    onComplete("${system.size}개 파일을 Android 확인창에서 승인해 주세요." +
+                        if (unsupportedCount > 0) " · 권한 없는 ${unsupportedCount}개 제외" else "")
                     return@launch
                 }
             }
             val legacyResult = withContext(Dispatchers.IO) { repository.deleteDirect(system) }
-            onComplete("삭제 ${directResult.first + legacyResult.first}개 · 실패 ${directResult.second + legacyResult.second}개")
+            onComplete("삭제 ${directResult.first + legacyResult.first}개 · 실패 ${directResult.second + legacyResult.second + unsupportedCount}개")
             scanFiles()
         }
     }
@@ -208,10 +215,18 @@ class MainActivity : ComponentActivity() {
         if (result.resultCode == Activity.RESULT_OK) {
             systemDeletedApproved += currentDeleteBatchSize
             if (pendingDeleteBatches.isNotEmpty()) launchNextDeleteBatch()
-            else { scanMessage = "${systemDeletedApproved}개 삭제를 Android가 승인했습니다."; scanFiles() }
+            else {
+                scanMessage = "삭제 ${deletedBeforeSystemApproval + systemDeletedApproved}개 · 실패 ${failedBeforeSystemApproval}개"
+                scanFiles()
+            }
         } else {
             pendingDeleteBatches.clear(); currentDeleteBatchSize = 0
-            scanMessage = "삭제를 취소했습니다."; scanFiles()
+            scanMessage = if (deletedBeforeSystemApproval > 0 || failedBeforeSystemApproval > 0) {
+                "Android 승인 취소 · 이미 삭제 ${deletedBeforeSystemApproval}개 · 실패 ${failedBeforeSystemApproval}개"
+            } else {
+                "삭제를 취소했습니다."
+            }
+            scanFiles()
         }
     }
 
@@ -232,7 +247,7 @@ class MainActivity : ComponentActivity() {
         FileLogger.append(this, "delete-request", error)
         pendingDeleteBatches.clear()
         currentDeleteBatchSize = 0
-        scanMessage = "삭제 요청에 실패했습니다: ${error.javaClass.simpleName}"
+        scanMessage = "삭제 요청 실패 · 삭제 ${deletedBeforeSystemApproval}개 · 실패 ${failedBeforeSystemApproval + 1}개"
     }
 
     private fun openSmartSwitch(): Boolean {
